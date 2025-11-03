@@ -1,0 +1,82 @@
+{
+  "experiments": [
+    {
+      "name": "usage-kwh-model-1",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,week_code,usage_kwh,cabon_kgco2e",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-kwh-model-1",
+      "r_epochs": 100,
+      "r_batchSize": 32,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 672,
+      "r_predDays": 1
+    },
+    {
+      "name": "usage-kwh-model-2",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,usage_kwh,cabon_kgco2e",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-kwh-model-2",
+      "r_epochs": 50,
+      "r_batchSize": 64,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 96,
+      "r_predDays": 1
+    },
+    {
+      "name": "usage-kwh-model-3",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,week_code,usage_kwh,cabon_kgco2e",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-kwh-model-3",
+      "r_epochs": 75,
+      "r_batchSize": 48,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 288,
+      "r_predDays": 1
+    },
+    {
+      "name": "usage-kwh-model-4",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,week_code,usage_kwh",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-kwh-model-4",
+      "r_epochs": 80,
+      "r_batchSize": 64,
+      "r_validationSplit": 0.15,
+      "r_seqLen": 192,
+      "r_predDays": 1
+    },
+    {
+      "name": "usage-kwh-model-5",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,usage_kwh,cabon_kgco2e",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-kwh-model-5",
+      "r_epochs": 60,
+      "r_batchSize": 32,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 480,
+      "r_predDays": 1
+    },
+    {
+      "name": "usage-kwh-model-6",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,usage_kwh,cabon_kgco2e",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-kwh-model-6",
+      "r_epochs": 60,
+      "r_batchSize": 32,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 480,
+      "r_predDays": 2
+    }
+  ]
+}

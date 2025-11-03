@@ -1,0 +1,44 @@
+{
+  "experiments": [
+    {
+      "name": "solar-hybrid-seq-2-test-20251017-test-no-add",
+      "tablename": "lstm_input_15m",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,avg_temp,avg_humi",
+      "targetColumn": "solar_kwh",
+      "modelName": "solar-hybrid-seq-2-test-20251017-test-no-add",
+      "r_epochs": 20,
+      "r_batchSize": 48,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 336,
+      "r_predDays": 1
+    },
+    {
+      "name": "solar-hybrid-seq-2-test-20251017-test-no-add-96",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,avg_temp,avg_humi",
+      "targetColumn": "solar_kwh",
+      "modelName": "solar-hybrid-seq-2-test-20251017-test-no-add-96",
+      "r_epochs": 20,
+      "r_batchSize": 48,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 336,
+      "r_predDays": 1
+    },
+    {
+      "name": "solar-hybrid-seq-2-test-20251017-test-no-add-usage_kwh",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,usage_kwh",
+      "targetColumn": "usage_kwh",
+      "modelName": "solar-hybrid-seq-2-test-20251017-test-no-add-usage_kwh",
+      "r_epochs": 20,
+      "r_batchSize": 32,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 672,
+      "r_predDays": 1,
+      "desc": "전력사용량 제일 확률 높은모델"
+    }
+  ]
+}

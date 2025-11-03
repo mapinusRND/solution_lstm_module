@@ -1,0 +1,205 @@
+{
+  "experiment_summary": {
+    "total_experiments": 1,
+    "successful_experiments": 1,
+    "failed_experiments": 0,
+    "total_execution_time_seconds": 443.66,
+    "start_timestamp": "2025-11-03T09:22:29.981441",
+    "completion_timestamp": "2025-11-03T09:22:29.981441"
+  },
+  "performance_ranking": [
+    {
+      "rank": 1,
+      "experiment_name": "usage-kwh-model-4",
+      "model_name": "usage-kwh-model-4",
+      "accuracy": 91.41,
+      "mape": 8.59,
+      "mae": 4.5644,
+      "rmse": 7.177,
+      "r2_score": 0.9853,
+      "direction_accuracy": 46.32,
+      "total_predictions": 884
+    }
+  ],
+  "detailed_results": [
+    {
+      "status": "success",
+      "modelName": "usage-kwh-model-4",
+      "training_loss_img": "graphImage/usage-kwh-model-4_trainingLoss.png",
+      "total_graph_img": "graphImage/usage-kwh-model-4_totalgraph.png",
+      "diff_graph_img": "graphImage/usage-kwh-model-4_diffgraph.png",
+      "weekday_comparison_img": "graphImage/usage-kwh-model-4_weekday_comparison.png",
+      "mape": 8.59,
+      "accuracy": 91.41,
+      "mae": 4.5644,
+      "rmse": 7.177,
+      "r2_score": 0.9853,
+      "direction_accuracy": 46.32,
+      "prediction_file": "predictions/usage-kwh-model-4_predictions.json",
+      "weekday_performance": {
+        "workday": {
+          "count": 500,
+          "mae": 6.9522,
+          "rmse": 9.1391,
+          "mape": 13.22
+        },
+        "holiday": {
+          "count": 384,
+          "mae": 1.4554,
+          "rmse": 3.1341,
+          "mape": 22.24
+        }
+      },
+      "prediction_summary": {
+        "total_predictions": 884,
+        "prediction_period": {
+          "start_date": "2025-07-18T19:00:00",
+          "end_date": "2025-07-27T23:45:00"
+        },
+        "value_statistics": {
+          "actual_min": 0.0,
+          "actual_max": 154.8,
+          "actual_mean": 69.43634389140271,
+          "predicted_min": -2.1324793260089905,
+          "predicted_max": 144.0605336731851,
+          "predicted_mean": 69.4356938087033
+        }
+      },
+      "recent_predictions": [
+        {
+          "date": "2025-07-27T21:30:00",
+          "actual": 3.5999999999999943,
+          "predicted": 2.6630782185485202,
+          "error": 0.9369217814514741
+        },
+        {
+          "date": "2025-07-27T21:45:00",
+          "actual": 2.8799999999999955,
+          "predicted": 2.676520287454977,
+          "error": 0.2034797125450183
+        },
+        {
+          "date": "2025-07-27T22:00:00",
+          "actual": 3.1680000000000064,
+          "predicted": 1.971682371563702,
+          "error": 1.1963176284363044
+        },
+        {
+          "date": "2025-07-27T22:15:00",
+          "actual": 2.5919999999999987,
+          "predicted": 2.5942112580520273,
+          "error": 0.0022112580520285974
+        },
+        {
+          "date": "2025-07-27T22:30:00",
+          "actual": 2.736000000000004,
+          "predicted": 1.8229782613903893,
+          "error": 0.9130217386096149
+        },
+        {
+          "date": "2025-07-27T22:45:00",
+          "actual": 2.5919999999999987,
+          "predicted": 2.3095276745013535,
+          "error": 0.2824723254986452
+        },
+        {
+          "date": "2025-07-27T23:00:00",
+          "actual": 2.8799999999999955,
+          "predicted": 2.0035363572692546,
+          "error": 0.8764636427307408
+        },
+        {
+          "date": "2025-07-27T23:15:00",
+          "actual": 3.024000000000001,
+          "predicted": 2.396728286475792,
+          "error": 0.627271713524209
+        },
+        {
+          "date": "2025-07-27T23:30:00",
+          "actual": 3.3119999999999976,
+          "predicted": 2.3662961207710254,
+          "error": 0.9457038792289723
+        },
+        {
+          "date": "2025-07-27T23:45:00",
+          "actual": 3.024000000000001,
+          "predicted": 2.6063228164990306,
+          "error": 0.4176771835009703
+        }
+      ],
+      "is_new_model": true,
+      "execution_time": 443.49,
+      "experiment_name": "usage-kwh-model-4"
+    }
+  ],
+  "prediction_files": [
+    {
+      "experiment_name": "usage-kwh-model-4",
+      "model_name": "usage-kwh-model-4",
+      "prediction_file_path": "predictions/usage-kwh-model-4_predictions.json",
+      "prediction_count": 884,
+      "recent_predictions": [
+        {
+          "date": "2025-07-27T21:30:00",
+          "actual": 3.5999999999999943,
+          "predicted": 2.6630782185485202,
+          "error": 0.9369217814514741
+        },
+        {
+          "date": "2025-07-27T21:45:00",
+          "actual": 2.8799999999999955,
+          "predicted": 2.676520287454977,
+          "error": 0.2034797125450183
+        },
+        {
+          "date": "2025-07-27T22:00:00",
+          "actual": 3.1680000000000064,
+          "predicted": 1.971682371563702,
+          "error": 1.1963176284363044
+        },
+        {
+          "date": "2025-07-27T22:15:00",
+          "actual": 2.5919999999999987,
+          "predicted": 2.5942112580520273,
+          "error": 0.0022112580520285974
+        },
+        {
+          "date": "2025-07-27T22:30:00",
+          "actual": 2.736000000000004,
+          "predicted": 1.8229782613903893,
+          "error": 0.9130217386096149
+        },
+        {
+          "date": "2025-07-27T22:45:00",
+          "actual": 2.5919999999999987,
+          "predicted": 2.3095276745013535,
+          "error": 0.2824723254986452
+        },
+        {
+          "date": "2025-07-27T23:00:00",
+          "actual": 2.8799999999999955,
+          "predicted": 2.0035363572692546,
+          "error": 0.8764636427307408
+        },
+        {
+          "date": "2025-07-27T23:15:00",
+          "actual": 3.024000000000001,
+          "predicted": 2.396728286475792,
+          "error": 0.627271713524209
+        },
+        {
+          "date": "2025-07-27T23:30:00",
+          "actual": 3.3119999999999976,
+          "predicted": 2.3662961207710254,
+          "error": 0.9457038792289723
+        },
+        {
+          "date": "2025-07-27T23:45:00",
+          "actual": 3.024000000000001,
+          "predicted": 2.6063228164990306,
+          "error": 0.4176771835009703
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "experiments": [
+    {
+      "name": "solar-hybrid-seq-2-test-20251017-test-no-add-usage_kwh",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,avg_temp,avg_humi",
+      "targetColumn": "usage_kwh",
+      "modelName": "solar-hybrid-seq-2-test-20251017-test-no-add-usage_kwh",
+      "r_epochs": 20,
+      "r_batchSize": 48,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 336,
+      "r_predDays": 1
+    }
+  ]
+}

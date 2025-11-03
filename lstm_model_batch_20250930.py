@@ -1,0 +1,948 @@
+# -*- coding: utf-8 -*-
+"""
+Title   : 외부데이터 기반 LSTM 예측 및 멀티 실험 자동화 모듈 (예측값 JSON 기록 기능 추가)
+Author  : 주성중 / (주)맵인어스
+"""
+
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+import time
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, Dense, Input
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import Callback
+import psycopg2
+from sklearn.preprocessing import StandardScaler
+import json
+import joblib
+from sqlalchemy import create_engine
+from datetime import datetime
+
+# 환경 설정
+ENV = os.getenv('FLASK_ENV', 'local')
+if ENV == 'local':
+    root = "D:/work/lstm"
+else:
+    root = "/app/webfiles/lstm"
+
+# 경로 설정
+graph_path = os.path.abspath(root + "/graphImage")
+os.makedirs(graph_path, exist_ok=True)
+model_path = os.path.abspath(root + "/saved_models")
+os.makedirs(model_path, exist_ok=True)
+# 예측 결과 저장 경로 추가
+prediction_path = os.path.abspath(root + "/predictions")
+os.makedirs(prediction_path, exist_ok=True)
+
+# ✅ PostgreSQL 연결 함수 (SQLAlchemy 사용)
+def get_db_engine():
+    """SQLAlchemy 엔진 생성"""
+    connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
+    return create_engine(connection_string)
+
+# ✅ JSON 설정 파일 로드
+def load_experiments_config(config_file="experiments.json"):
+    """실험 설정 JSON 파일 로드"""
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+        return config['experiments']
+    except FileNotFoundError:
+        print(f"❌ 설정 파일 '{config_file}'을 찾을 수 없습니다.")
+        return []
+    except json.JSONDecodeError:
+        print(f"❌ JSON 파일 형식이 잘못되었습니다: {config_file}")
+        return []
+
+# ✅ 데이터 로드 함수
+def load_data_from_db(tablename, dateColumn, studyColumns):
+    """데이터베이스에서 데이터 로드"""
+    try:
+        engine = get_db_engine()
+        
+        query = f"""
+        SELECT {studyColumns},{dateColumn}
+        FROM carbontwin.{tablename}
+        WHERE {dateColumn} IS NOT NULL
+        ORDER BY {dateColumn} ASC
+        """
+        
+        data = pd.read_sql_query(query, engine)
+        print(f"✅ 데이터 로드 성공: {len(data)}행")
+        return data
+        
+    except Exception as e:
+        print(f"❌ 데이터베이스 오류: {str(e)}")
+        return None
+
+# ✅ NumPy 배열을 JSON 직렬화 가능한 형태로 변환하는 함수
+def convert_numpy_to_json_serializable(obj):
+    """NumPy 배열과 특수 타입을 JSON 직렬화 가능한 형태로 변환"""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, pd.Timestamp):
+        return obj.isoformat()
+    elif isinstance(obj, datetime):
+        return obj.isoformat()
+    else:
+        return obj
+
+# ✅ 예측 결과를 JSON 형태로 저장하는 함수
+def save_predictions_to_json(modelName, dates, actual_values, predicted_values, target_column):
+    """
+    예측 결과를 JSON 파일로 저장
+    
+    생성되는 JSON 구조:
+    {
+        "model_name": "모델명",                    # 사용된 LSTM 모델의 이름
+        "target_column": "예측대상컬럼",           # 예측한 타겟 변수 (예: solar_power, price 등)
+        "prediction_count": 1000,                 # 총 예측 데이터 포인트 수
+        "timestamp": "2025-09-23T13:18:16",      # 예측 파일 생성 시간
+        "statistics": {                          # 예측 결과 통계 정보
+            "actual_min": 0.0,                   # 실제값 최솟값
+            "actual_max": 1.76,                  # 실제값 최댓값  
+            "actual_mean": 0.27,                 # 실제값 평균
+            "predicted_min": 0.001,              # 예측값 최솟값
+            "predicted_max": 1.34,               # 예측값 최댓값
+            "predicted_mean": 0.27,              # 예측값 평균
+            "mean_absolute_error": 0.039,        # 평균 절대 오차 (MAE)
+            "rmse": 0.076                        # 제곱근 평균 제곱 오차 (RMSE)
+        },
+        "predictions": [                         # 개별 예측 결과 배열
+            {
+                "index": 0,                      # 데이터 포인트 인덱스
+                "date": "2025-07-25T22:36:00",   # 예측 시점의 날짜/시간
+                "actual_value": 0.15,            # 실제 관측값
+                "predicted_value": 0.14,         # 모델 예측값
+                "difference": -0.01,             # 차이 (예측값 - 실제값)
+                "percentage_error": 6.67         # 백분율 오차 |차이/실제값| * 100
+            },
+            ...
+        ]
+    }
+    """
+    try:
+        # 예측 데이터 구성 - 각 시점별 실제값과 예측값을 비교
+        predictions_data = []
+        
+        for i in range(len(actual_values)):
+            prediction_record = {
+                "index": i,  # 순서 인덱스
+                "date": convert_numpy_to_json_serializable(dates.iloc[i] if hasattr(dates, 'iloc') else dates[i]),  # 예측 시점
+                "actual_value": convert_numpy_to_json_serializable(actual_values[i]),  # 실제 관측값
+                "predicted_value": convert_numpy_to_json_serializable(predicted_values[i]),  # 모델 예측값
+                "difference": convert_numpy_to_json_serializable(predicted_values[i] - actual_values[i]),  # 예측 오차
+                "percentage_error": convert_numpy_to_json_serializable(  # 백분율 오차 계산
+                    abs((predicted_values[i] - actual_values[i]) / actual_values[i] * 100) if actual_values[i] != 0 else 0
+                )
+            }
+            predictions_data.append(prediction_record)
+        
+        # JSON 파일로 저장할 전체 구조 생성
+        prediction_file_path = os.path.join(prediction_path, f"{modelName}_predictions.json")
+        
+        prediction_summary = {
+            # 기본 정보
+            "model_name": modelName,  # 모델 식별자
+            "target_column": target_column,  # 예측 대상 변수명
+            "prediction_count": len(predictions_data),  # 총 예측 건수
+            "timestamp": datetime.now().isoformat(),  # 파일 생성 시간
+            
+            # 통계 요약 정보 - 모델 성능 평가에 활용
+            "statistics": {
+                "actual_min": convert_numpy_to_json_serializable(np.min(actual_values)),  # 실제 데이터 범위
+                "actual_max": convert_numpy_to_json_serializable(np.max(actual_values)),
+                "actual_mean": convert_numpy_to_json_serializable(np.mean(actual_values)),  # 실제 데이터 중심 경향
+                "predicted_min": convert_numpy_to_json_serializable(np.min(predicted_values)),  # 예측 데이터 범위
+                "predicted_max": convert_numpy_to_json_serializable(np.max(predicted_values)),
+                "predicted_mean": convert_numpy_to_json_serializable(np.mean(predicted_values)),  # 예측 데이터 중심 경향
+                "mean_absolute_error": convert_numpy_to_json_serializable(np.mean(np.abs(predicted_values - actual_values))),  # 평균 절대 오차
+                "rmse": convert_numpy_to_json_serializable(np.sqrt(np.mean((predicted_values - actual_values) ** 2)))  # 제곱근 평균 제곱 오차
+            },
+            
+            # 상세 예측 결과 - 시계열 분석 및 후처리에 활용
+            "predictions": predictions_data
+        }
+        
+        with open(prediction_file_path, 'w', encoding='utf-8') as f:
+            json.dump(prediction_summary, f, indent=2, ensure_ascii=False)
+        
+        print(f"💾 예측 결과가 저장되었습니다: {prediction_file_path}")
+        return prediction_summary
+        
+    except Exception as e:
+        print(f"❌ 예측 결과 저장 중 오류: {str(e)}")
+        return None
+
+# ✅ 단일 실험 실행 함수
+def run_single_experiment(experiment_config, experiment_index):
+    """단일 실험 실행"""
+    print(f"\n{'='*60}")
+    print(f"🚀 실험 {experiment_index + 1}/{len(experiment_config)} 시작: {experiment_config['name']}")
+    print(f"{'='*60}")
+    
+    # 설정 출력
+    print(f"📋 실험 설정:")
+    print(f"   - 테이블: {experiment_config['tablename']}")
+    print(f"   - 모델명: {experiment_config['modelName']}")
+    print(f"   - 타겟 컬럼: {experiment_config['targetColumn']}")
+    print(f"   - 에포크: {experiment_config['r_epochs']}")
+    print(f"   - 배치크기: {experiment_config['r_batchSize']}")
+    print(f"   - 시퀀스길이: {experiment_config['r_seqLen']}")
+    
+    # 데이터 로드
+    data = load_data_from_db(
+        experiment_config['tablename'],
+        experiment_config['dateColumn'], 
+        experiment_config['studyColumns']
+    )
+    
+    if data is None:
+        return {"status": "error", "message": "데이터 로드 실패"}
+    
+    # 학습 실행
+    start_time = time.time()
+    result = lstmFinance(data, experiment_config)
+    end_time = time.time()
+    
+    # 실행 시간 추가
+    result['execution_time'] = round(end_time - start_time, 2)
+    result['experiment_name'] = experiment_config['name']
+    
+    print(f"⏱️  실험 완료 시간: {result['execution_time']}초")
+    return result
+
+# ✅ LSTM 학습 함수 (예측값 저장 기능 추가)
+def lstmFinance(lstmData, config):
+    """LSTM 모델 학습 (설정 객체 기반, 예측값 저장 포함)"""
+    
+    if not tf.executing_eagerly():
+        tf.config.run_functions_eagerly(True)
+
+    # 설정에서 파라미터 추출
+    modelName = config['modelName']
+    dateColumn = config['dateColumn']
+    studyColumns = config['studyColumns']
+    targetColumn = config['targetColumn']
+    r_epochs = config['r_epochs']
+    r_batchSize = config['r_batchSize']
+    r_validationSplit = config['r_validationSplit']
+    r_seqLen = config['r_seqLen']
+    r_predDays = config['r_predDays']
+
+    # 파일 경로 설정
+    training_loss_path = os.path.join(graph_path, f"{modelName}_trainingLoss.png")
+    total_graph_path = os.path.join(graph_path, f"{modelName}_totalgraph.png")
+    diff_graph_path = os.path.join(graph_path, f"{modelName}_diffgraph.png")
+    model_file_path = os.path.join(model_path, f"{modelName}.h5")
+
+    stock_data = lstmData
+    
+    # 데이터 검증
+    if stock_data.empty:
+        return {"status": "error", "message": "데이터가 비어있습니다."}
+    
+    study_columns_list = [col.strip() for col in studyColumns.split(',')]
+    if targetColumn not in study_columns_list:
+        return {"status": "error", "message": f"타겟 컬럼 '{targetColumn}'이 학습 컬럼에 없습니다."}
+
+    # 날짜 컬럼 처리
+    if dateColumn in stock_data.columns:
+        dates = pd.to_datetime(stock_data[dateColumn], errors='coerce')
+    else:
+        dates = pd.date_range(start='2023-01-01', periods=len(stock_data), freq='5T')
+        print(f"⚠️ 날짜 컬럼 '{dateColumn}'이 없어서 가상 날짜를 생성했습니다.")
+    
+    original_open = stock_data[targetColumn].values
+    stock_data_for_training = stock_data[study_columns_list].astype(float)
+
+    # 데이터 스케일링
+    scaler = StandardScaler()
+    stock_data_scaled = scaler.fit_transform(stock_data_for_training)
+
+    n_train = int(0.9 * stock_data_scaled.shape[0])
+    train_data_scaled = stock_data_scaled[:n_train]
+    test_data_scaled = stock_data_scaled[n_train:]
+    test_dates = dates[n_train:]
+
+    pred_days = int(r_predDays)
+    seq_len = int(r_seqLen)
+    input_dim = stock_data_for_training.shape[1]
+    target_idx = study_columns_list.index(targetColumn)
+
+    # 시퀀스 데이터 생성
+    trainX, trainY, testX, testY = [], [], [], []
+    for i in range(seq_len, n_train - pred_days + 1):
+        trainX.append(train_data_scaled[i - seq_len:i, 0:input_dim])
+        trainY.append(train_data_scaled[i + pred_days - 1:i + pred_days, target_idx])
+
+    for i in range(seq_len, len(test_data_scaled) - pred_days + 1):
+        testX.append(test_data_scaled[i - seq_len:i, 0:input_dim])
+        testY.append(test_data_scaled[i + pred_days - 1:i + pred_days, target_idx])
+
+    trainX, trainY = np.array(trainX), np.array(trainY)
+    testX, testY = np.array(testX), np.array(testY)
+
+    print(f"🔄 {modelName} 모델 학습 시작...")
+    print(f"📊 훈련 데이터: {trainX.shape}, 테스트 데이터: {testX.shape}")
+
+    # 모델 생성 또는 로드
+    try:
+        model = load_model(model_file_path, compile=False)
+        model.compile(optimizer=Adam(learning_rate=0.01), loss='mse')
+        print("✅ 기존 모델 로드됨")
+    except (OSError, IOError):
+        print("🔄 새 모델 생성 중...")
+
+        model = Sequential([
+            Input(shape=(trainX.shape[1], trainX.shape[2])),
+            LSTM(64, return_sequences=True),
+            LSTM(32, return_sequences=False),
+            Dense(trainY.shape[1])
+        ])
+
+        model.compile(optimizer=Adam(learning_rate=0.01), loss='mse')
+
+        class TrainingCallback(Callback):
+            def __init__(self, total_epochs, batch_size):
+                super().__init__()
+                self.total_epochs = total_epochs
+                self.batch_size = batch_size
+                self.prev_val_loss = None
+                
+            def on_train_begin(self, logs=None):
+                print(f"🚀 모델 학습 시작 - 총 {self.total_epochs} 에포크")
+                print(f"📊 배치 크기: {self.batch_size}")
+                
+            def on_epoch_begin(self, epoch, logs=None):
+                print(f"\n⏳ Epoch {epoch + 1}/{self.total_epochs} 시작...")
+                
+            def on_epoch_end(self, epoch, logs=None):
+                logs = logs or {}
+                loss = logs.get('loss', 0)
+                val_loss = logs.get('val_loss', 0)
+                
+                # 진행률 계산
+                progress = (epoch + 1) / self.total_epochs * 100
+                
+                # 진행바 생성
+                bar_length = 30
+                filled_length = int(bar_length * (epoch + 1) // self.total_epochs)
+                bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                
+                print(f"✅ Epoch {epoch + 1}/{self.total_epochs} [{bar}] {progress:.1f}%")
+                print(f"   📉 Loss: {loss:.6f} | Val_Loss: {val_loss:.6f}")
+                
+                # 개선 여부 확인
+                if epoch > 0 and self.prev_val_loss is not None:
+                    if val_loss < self.prev_val_loss:
+                        print(f"   📈 검증 손실 개선: {self.prev_val_loss:.6f} → {val_loss:.6f}")
+                    elif val_loss > self.prev_val_loss * 1.1:  # 10% 이상 증가시 경고
+                        print(f"   ⚠️  검증 손실 증가: {self.prev_val_loss:.6f} → {val_loss:.6f}")
+                
+                self.prev_val_loss = val_loss
+                
+            def on_train_end(self, logs=None):
+                print(f"\n🎉 학습 완료!")
+
+        history = model.fit(
+            trainX, trainY,
+            epochs=int(r_epochs),
+            batch_size=int(r_batchSize),
+            validation_split=float(r_validationSplit),
+            verbose=1,  # 기본 진행상황 표시
+            callbacks=[TrainingCallback(int(r_epochs), int(r_batchSize))]
+        )
+
+        model.save(model_file_path)
+        print("✅ 모델 저장 완료")
+
+        # 학습 손실 그래프 저장
+        plt.figure(figsize=(12, 4))
+        plt.plot(history.history['loss'], label='Training loss')
+        plt.plot(history.history['val_loss'], label='Validation loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.title(f'{modelName} - Training Loss')
+        plt.legend()
+        plt.savefig(training_loss_path)
+        plt.close()
+
+    # 예측 수행
+    print(f"\n🔮 예측 수행 중...")
+    print(f"📊 예측할 샘플 수: {len(testX)}")
+    
+    # 배치별로 예측하여 진행상황 표시
+    batch_size_pred = 32  # 예측용 배치 크기
+    predictions = []
+    
+    total_batches = (len(testX) + batch_size_pred - 1) // batch_size_pred
+    
+    for i in range(0, len(testX), batch_size_pred):
+        batch_end = min(i + batch_size_pred, len(testX))
+        batch_data = testX[i:batch_end]
+        
+        batch_pred = model.predict(batch_data, verbose=0)
+        predictions.append(batch_pred)
+        
+        # 진행상황 표시
+        current_batch = (i // batch_size_pred) + 1
+        progress = current_batch / total_batches * 100
+        
+        # 진행바 생성
+        bar_length = 25
+        filled_length = int(bar_length * current_batch // total_batches)
+        bar = '█' * filled_length + '░' * (bar_length - filled_length)
+        
+        print(f"\r⏳ 예측 진행: [{bar}] {progress:.1f}% ({current_batch}/{total_batches} 배치)", end='', flush=True)
+    
+    prediction = np.vstack(predictions)
+    print(f"\n✅ 예측 완료! 총 {len(prediction)}개 샘플 예측됨")
+
+    # 예측 결과 역변환
+    mean_values_pred = np.repeat(scaler.mean_[np.newaxis, :], prediction.shape[0], axis=0)
+    mean_values_pred[:, target_idx] = np.squeeze(prediction)
+    y_pred = scaler.inverse_transform(mean_values_pred)[:, target_idx]
+
+    mean_values_testY = np.repeat(scaler.mean_[np.newaxis, :], testY.shape[0], axis=0)
+    mean_values_testY[:, target_idx] = np.squeeze(testY)
+    testY_original = scaler.inverse_transform(mean_values_testY)[:, target_idx]
+    valid_test_dates = test_dates[seq_len : seq_len + len(testY_original)]
+
+    # ✅ 예측 결과를 JSON으로 저장
+    print(f"\n💾 예측 결과를 JSON 파일로 저장 중...")
+    prediction_summary = save_predictions_to_json(
+        modelName, 
+        valid_test_dates, 
+        testY_original, 
+        y_pred, 
+        targetColumn
+    )
+
+    # 전체 그래프 저장
+    plt.figure(figsize=(15, 5))
+    plt.plot(dates, original_open, color='green', label=f'Original {targetColumn}', alpha=0.7)
+    plt.plot(valid_test_dates, testY_original, color='blue', label=f'Actual {targetColumn}')
+    plt.plot(valid_test_dates, y_pred, color='red', linestyle='--', label=f'Predicted {targetColumn}')
+    plt.xlabel(dateColumn)
+    plt.ylabel(f'{targetColumn} Value')
+    plt.title(f'{modelName} - Prediction Results')
+    plt.legend()
+    plt.savefig(total_graph_path)
+    plt.close()
+
+    # 확대 그래프 저장
+    zoom_start = max(0, len(valid_test_dates) - 50)
+    plt.figure(figsize=(15, 5))
+    plt.plot(valid_test_dates[zoom_start:], testY_original[zoom_start:], color='blue', label=f'Actual {targetColumn}')
+    plt.plot(valid_test_dates[zoom_start:], y_pred[zoom_start:], color='red', linestyle='--', label=f'Predicted {targetColumn}')
+    plt.xlabel(dateColumn)
+    plt.ylabel(f'{targetColumn} Value')
+    plt.title(f'{modelName} - Recent Predictions (Last 50 points)')
+    plt.legend()
+    plt.savefig(diff_graph_path)
+    plt.close()
+
+    # 정확도 계산
+    print(f"\n📈 성능 평가 중...")
+    
+    def mean_absolute_percentage_error(y_true, y_pred):
+        mask = y_true != 0
+        if np.sum(mask) == 0:
+            return 999.0
+        return np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100
+
+    # 추가 평가 지표들 계산
+    try:
+        from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+        sklearn_available = True
+    except ImportError:
+        print("⚠️ scikit-learn이 설치되지 않았습니다. 기본 지표만 계산합니다.")
+        sklearn_available = False
+    
+    mape = mean_absolute_percentage_error(testY_original, y_pred)
+    accuracy = 100 - mape if not np.isnan(mape) else 0
+    
+    # 추가 지표들
+    if sklearn_available:
+        mse = mean_squared_error(testY_original, y_pred)
+        rmse = np.sqrt(mse)
+        mae = mean_absolute_error(testY_original, y_pred)
+        r2 = r2_score(testY_original, y_pred)
+    else:
+        # 수동으로 계산
+        mse = np.mean((testY_original - y_pred) ** 2)
+        rmse = np.sqrt(mse)
+        mae = np.mean(np.abs(testY_original - y_pred))
+        
+        # R² 수동 계산
+        ss_res = np.sum((testY_original - y_pred) ** 2)
+        ss_tot = np.sum((testY_original - np.mean(testY_original)) ** 2)
+        r2 = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+    
+    # 방향성 정확도 (상승/하락 방향 예측 정확도)
+    if len(testY_original) > 1:
+        actual_direction = np.diff(testY_original) > 0
+        pred_direction = np.diff(y_pred) > 0
+        direction_accuracy = np.mean(actual_direction == pred_direction) * 100
+    else:
+        direction_accuracy = 0
+    
+    # 결과 출력
+    print(f"\n📊 모델 성능 결과:")
+    print(f"   🎯 MAPE: {mape:.2f}%")
+    print(f"   📈 정확도: {accuracy:.2f}%")
+    print(f"   📏 MAE: {mae:.4f}")
+    print(f"   📐 RMSE: {rmse:.4f}")
+    print(f"   🔍 R² Score: {r2:.4f}")
+    print(f"   🧭 방향성 정확도: {direction_accuracy:.2f}%")
+    
+    # 성능 등급 계산
+    if accuracy >= 90:
+        grade = "🏆 우수"
+    elif accuracy >= 80:
+        grade = "🥇 양호"
+    elif accuracy >= 70:
+        grade = "🥈 보통"
+    elif accuracy >= 60:
+        grade = "🥉 개선필요"
+    else:
+        grade = "❌ 불량"
+    
+    print(f"   📊 성능 등급: {grade}")
+    
+    # 예측 범위 분석
+    pred_min, pred_max = np.min(y_pred), np.max(y_pred)
+    actual_min, actual_max = np.min(testY_original), np.max(testY_original)
+    print(f"\n📊 예측값 범위 분석:")
+    print(f"   실제값 범위: {actual_min:.3f} ~ {actual_max:.3f}")
+    print(f"   예측값 범위: {pred_min:.3f} ~ {pred_max:.3f}")
+    
+    # 과/소예측 분석
+    over_predict = np.sum(y_pred > testY_original) / len(y_pred) * 100
+    under_predict = 100 - over_predict
+    print(f"   과예측 비율: {over_predict:.1f}%")
+    print(f"   소예측 비율: {under_predict:.1f}%")
+
+    # 설정 및 스케일러 저장
+    with open(os.path.join(model_path, f"{modelName}_config.json"), "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+
+    joblib.dump(scaler, os.path.join(model_path, f"{modelName}_scaler.pkl"))
+
+    # ✅ 예측 데이터를 포함한 반환값 - lstmFinance 함수의 결과 구조
+    result = {
+            "status": "success",  # 실험 상태: "success" 또는 "error"
+            "modelName": modelName,  # 저장된 모델 파일명 (.h5)
+            
+            # 생성된 파일들의 상대 경로
+            "training_loss_img": f"graphImage/{modelName}_trainingLoss.png",  # 학습 손실 그래프
+            "total_graph_img": f"graphImage/{modelName}_totalgraph.png",  # 전체 예측 결과 그래프  
+            "diff_graph_img": f"graphImage/{modelName}_diffgraph.png",  # 최근 구간 확대 그래프
+            
+            # 핵심 성능 지표들
+            "mape": round(mape, 2),  # 평균 절대 백분율 오차 (Mean Absolute Percentage Error)
+            "accuracy": round(accuracy, 2),  # 정확도 % = 100 - MAPE
+            "mae": round(mae, 4),  # 평균 절대 오차 (Mean Absolute Error)
+            "rmse": round(rmse, 4),  # 제곱근 평균 제곱 오차 (Root Mean Square Error)
+            "r2_score": round(r2, 4),  # 결정계수 (R-squared), 1에 가까울수록 모델 설명력이 높음
+            "direction_accuracy": round(direction_accuracy, 2),  # 상승/하락 방향 예측 정확도 %
+            
+            # 예측 데이터 파일 정보
+            "prediction_file": f"predictions/{modelName}_predictions.json",  # 상세 예측 결과 JSON 파일 경로
+            
+            # 예측 요약 정보 - 빠른 개요 확인용
+            "prediction_summary": {
+                "total_predictions": len(y_pred),  # 총 예측 데이터 포인트 수
+                "prediction_period": {  # 예측 기간 정보
+                    "start_date": convert_numpy_to_json_serializable(valid_test_dates.iloc[0]) if len(valid_test_dates) > 0 else None,  # 예측 시작일
+                    "end_date": convert_numpy_to_json_serializable(valid_test_dates.iloc[-1]) if len(valid_test_dates) > 0 else None  # 예측 종료일
+                },
+                "value_statistics": {  # 값 분포 통계
+                    "actual_min": convert_numpy_to_json_serializable(np.min(testY_original)),  # 실제값 최솟값
+                    "actual_max": convert_numpy_to_json_serializable(np.max(testY_original)),  # 실제값 최댓값
+                    "actual_mean": convert_numpy_to_json_serializable(np.mean(testY_original)),  # 실제값 평균
+                    "predicted_min": convert_numpy_to_json_serializable(np.min(y_pred)),  # 예측값 최솟값
+                    "predicted_max": convert_numpy_to_json_serializable(np.max(y_pred)),  # 예측값 최댓값
+                    "predicted_mean": convert_numpy_to_json_serializable(np.mean(y_pred))  # 예측값 평균
+                }
+            }
+        }
+    
+    # ✅ 최근 N개 예측값을 직접 결과에 포함 - 빠른 확인용 샘플 데이터
+    recent_predictions_count = min(10, len(y_pred))  # 최근 10개만 포함
+    if recent_predictions_count > 0:
+        result["recent_predictions"] = []
+        for i in range(-recent_predictions_count, 0):  # 마지막 10개 선택
+            result["recent_predictions"].append({
+                "date": convert_numpy_to_json_serializable(valid_test_dates.iloc[i]),  # 예측 시점
+                "actual": convert_numpy_to_json_serializable(testY_original[i]),  # 실제 관측값
+                "predicted": convert_numpy_to_json_serializable(y_pred[i]),  # 모델 예측값  
+                "error": convert_numpy_to_json_serializable(abs(y_pred[i] - testY_original[i]))  # 절대 오차
+            })
+
+        """
+        result 객체의 활용 방법:
+        
+        1. 성능 평가: mape, accuracy, r2_score 등으로 모델 품질 판단
+        2. 시각화: *_img 경로의 그래프 파일들로 결과 확인
+        3. 상세 분석: prediction_file 경로의 JSON으로 전체 예측 데이터 분석
+        4. 빠른 확인: recent_predictions로 최신 예측 결과 미리보기
+        5. 통계 요약: prediction_summary로 전체적인 예측 패턴 파악
+        
+        주요 성능 지표 해석:
+        - MAPE: 낮을수록 좋음 (10% 이하 우수, 20% 이하 양호)
+        - R² Score: 높을수록 좋음 (0.9 이상 우수, 0.7 이상 양호)  
+        - Direction Accuracy: 높을수록 좋음 (60% 이상 양호)
+        """
+
+    return result
+
+# ✅ 멀티 실험 실행 함수 (예측값 포함 결과 저장)
+def run_multiple_experiments(config_file="experiments.json"):
+    """여러 실험을 순차적으로 실행 (예측값 포함)"""
+    experiments = load_experiments_config(config_file)
+    
+    if not experiments:
+        print("❌ 실행할 실험이 없습니다.")
+        return
+    
+    print(f"🔬 총 {len(experiments)}개의 실험을 시작합니다.")
+    print(f"⏰ 시작 시간: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    results = []
+    total_start_time = time.time()
+    
+    for i, experiment in enumerate(experiments):
+        try:
+            result = run_single_experiment(experiment, i)
+            results.append(result)
+            
+            if result['status'] == 'success':
+                print(f"✅ {experiment['name']} 완료 - 정확도: {result['accuracy']:.2f}%")
+                print(f"   📊 예측 데이터 수: {result['prediction_summary']['total_predictions']}개")
+            else:
+                print(f"❌ {experiment['name']} 실패: {result.get('message', '알 수 없는 오류')}")
+                
+        except Exception as e:
+            print(f"❌ {experiment['name']} 실행 중 오류: {str(e)}")
+            results.append({"status": "error", "message": str(e), "experiment_name": experiment['name']})
+    
+    total_end_time = time.time()
+    total_time = round(total_end_time - total_start_time, 2)
+    
+    # 결과 요약
+    print(f"\n{'='*60}")
+    print(f"📊 실험 결과 요약")
+    print(f"{'='*60}")
+    print(f"⏱️  총 실행 시간: {total_time}초")
+    print(f"✅ 성공: {len([r for r in results if r['status'] == 'success'])}개")
+    print(f"❌ 실패: {len([r for r in results if r['status'] == 'error'])}개")
+    
+    # 성공한 실험들의 정확도 순위
+    successful_results = [r for r in results if r['status'] == 'success']
+    if successful_results:
+        successful_results.sort(key=lambda x: x['accuracy'], reverse=True)
+        print(f"\n🏆 정확도 순위:")
+        for i, result in enumerate(successful_results, 1):
+            print(f"{i}. {result['experiment_name']}: {result['accuracy']:.2f}% (MAPE: {result['mape']:.2f}%)")
+            print(f"   📈 R² Score: {result.get('r2_score', 'N/A')}, 방향성 정확도: {result.get('direction_accuracy', 'N/A'):.1f}%")
+    
+    # ✅ 전체 실험 결과 및 예측 데이터를 포함한 종합 JSON 저장
+    comprehensive_results = {
+        # 실험 전체 요약 정보
+        "experiment_summary": {
+            "total_experiments": len(experiments),  # 실행한 총 실험 개수
+            "successful_experiments": len(successful_results),  # 성공적으로 완료된 실험 수
+            "failed_experiments": len(results) - len(successful_results),  # 실패한 실험 수
+            "total_execution_time_seconds": total_time,  # 전체 실험 소요 시간 (초)
+            "start_timestamp": datetime.now().isoformat(),  # 실험 시작 시간
+            "completion_timestamp": datetime.now().isoformat()  # 실험 완료 시간
+        },
+        
+        # 성능 기준 순위 정보 - 정확도 높은 순으로 정렬
+        "performance_ranking": [
+            {
+                "rank": i + 1,  # 성능 순위 (1등, 2등, ...)
+                "experiment_name": result['experiment_name'],  # 실험명 (구분자)
+                "model_name": result['modelName'],  # 모델 파일명
+                "accuracy": result['accuracy'],  # 정확도 % (100 - MAPE)
+                "mape": result['mape'],  # 평균 절대 백분율 오차 (낮을수록 좋음)
+                "mae": result.get('mae', None),  # 평균 절대 오차
+                "rmse": result.get('rmse', None),  # 제곱근 평균 제곱 오차
+                "r2_score": result.get('r2_score', None),  # 결정계수 (1에 가까울수록 좋음)
+                "direction_accuracy": result.get('direction_accuracy', None),  # 방향성 예측 정확도 %
+                "total_predictions": result['prediction_summary']['total_predictions'] if 'prediction_summary' in result else 0  # 예측 데이터 포인트 수
+            }
+            for i, result in enumerate(successful_results)
+        ],
+        
+        # 상세 실험 결과 - 각 실험의 모든 정보 포함
+        "detailed_results": results,  # 성공/실패 포함한 모든 실험 결과
+        
+        # 예측 파일 정보 - 생성된 예측 데이터 파일들의 메타데이터
+        "prediction_files": [
+            {
+                "experiment_name": result['experiment_name'],  # 실험 식별자
+                "model_name": result['modelName'],  # 모델명
+                "prediction_file_path": result.get('prediction_file', 'N/A'),  # 예측 JSON 파일 경로
+                "prediction_count": result['prediction_summary']['total_predictions'] if 'prediction_summary' in result else 0,  # 예측 건수
+                "recent_predictions": result.get('recent_predictions', [])  # 최근 10개 예측 결과 샘플
+            }
+            for result in successful_results
+        ]
+    }
+    
+    """
+    comprehensive_experiment_results.json 파일 구조 설명:
+    
+    1. experiment_summary: 전체 실험 배치의 요약 통계
+       - 몇 개의 실험을 돌렸는지, 성공/실패 비율, 총 소요시간 등
+       
+    2. performance_ranking: 성능 순위표
+       - 정확도 기준으로 정렬된 모델들의 성능 지표
+       - 어떤 모델이 가장 좋은 성능을 보였는지 한눈에 파악 가능
+       
+    3. detailed_results: 개별 실험의 상세 결과
+       - 각 실험별 성공/실패 상태, 오류 메시지, 모든 성능 지표 포함
+       - 그래프 파일 경로, 예측 파일 경로 등 생성된 결과물 정보
+       
+    4. prediction_files: 예측 데이터 파일 목록
+       - 각 모델별로 생성된 상세 예측 결과 JSON 파일들의 메타데이터
+       - 빠른 파일 접근을 위한 인덱스 역할
+       
+    활용 방법:
+    - 성능 비교: performance_ranking에서 모델별 성능 순위 확인
+    - 오류 분석: detailed_results에서 실패한 실험의 원인 파악  
+    - 결과 활용: prediction_files에서 각 모델의 예측 데이터 파일 위치 확인
+    - 재현성: detailed_results의 설정 정보로 동일한 실험 재실행 가능
+    """
+    
+    # 종합 결과를 JSON 파일로 저장
+    comprehensive_results_file = "comprehensive_experiment_results.json"
+    with open(comprehensive_results_file, "w", encoding="utf-8") as f:
+        json.dump(comprehensive_results, f, indent=2, ensure_ascii=False, default=convert_numpy_to_json_serializable)
+    
+    print(f"\n💾 종합 결과가 '{comprehensive_results_file}'에 저장되었습니다.")
+    print(f"📁 개별 예측 결과는 'predictions/' 폴더에 저장되었습니다.")
+    
+    # 예측 파일 목록 출력
+    if successful_results:
+        print(f"\n📄 생성된 예측 파일 목록:")
+        for result in successful_results:
+            if 'prediction_file' in result:
+                print(f"   - {result['prediction_file']}")
+    
+    return results
+
+# ✅ 개별 예측 파일 분석 함수 (추가 유틸리티)
+def analyze_prediction_file(prediction_file_path):
+    """
+    저장된 예측 파일을 분석하여 요약 정보 출력
+    
+    이 함수는 개별 모델의 예측 JSON 파일을 읽어서 다음 정보들을 분석합니다:
+    - 모델 기본 정보 (이름, 타겟 변수, 예측 건수)
+    - 통계적 성능 지표 (오차, 범위, 평균 등)
+    - 최근 예측 결과 샘플 (시간별 실제값 vs 예측값)
+    
+    활용 예시:
+    - 모델 성능 검증
+    - 예측 패턴 분석  
+    - 시계열 데이터 품질 확인
+    """
+    try:
+        with open(prediction_file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        print(f"\n📊 예측 파일 분석: {prediction_file_path}")
+        print(f"{'='*50}")
+        print(f"모델명: {data['model_name']}")  # 어떤 모델인지 식별
+        print(f"타겟 컬럼: {data['target_column']}")  # 무엇을 예측했는지 (예: 태양광발전량, 주가 등)
+        print(f"예측 개수: {data['prediction_count']}")  # 총 몇 개의 데이터 포인트를 예측했는지
+        print(f"생성 시간: {data['timestamp']}")  # 언제 예측이 수행되었는지
+        
+        stats = data['statistics']
+        print(f"\n📈 통계 정보:")
+        # 실제값과 예측값의 범위 비교 - 모델이 적절한 범위에서 예측하는지 확인
+        print(f"   실제값 범위: {stats['actual_min']:.3f} ~ {stats['actual_max']:.3f}")
+        print(f"   예측값 범위: {stats['predicted_min']:.3f} ~ {stats['predicted_max']:.3f}")
+        # 오차 지표들 - 모델의 정확도 평가
+        print(f"   평균 절대 오차 (MAE): {stats['mean_absolute_error']:.4f}")  # 평균적으로 얼마나 틀렸는지
+        print(f"   제곱근 평균 제곱 오차 (RMSE): {stats['rmse']:.4f}")  # 큰 오차에 더 민감한 지표
+        
+        # 최근 5개 예측 결과 출력 - 모델의 최신 성능 확인
+        predictions = data['predictions']
+        print(f"\n🔍 최근 5개 예측 결과:")
+        for pred in predictions[-5:]:  # 마지막 5개 선택
+            error_pct = pred['percentage_error']
+            # 각 시점별로 실제값, 예측값, 오차율 표시
+            print(f"   {pred['date'][:19]}: 실제={pred['actual_value']:.3f}, 예측={pred['predicted_value']:.3f}, 오차={error_pct:.2f}%")
+            
+        """
+        분석 결과 해석 가이드:
+        
+        1. 범위 비교:
+           - 예측값 범위가 실제값 범위와 비슷하면 좋은 신호
+           - 예측값이 너무 좁으면 과소추정, 너무 넓으면 과대추정
+           
+        2. 오차 지표:
+           - MAE: 일반적인 예측 오차의 크기
+           - RMSE: MAE보다 크면 가끔 큰 오차가 발생함을 의미
+           
+        3. 시간별 패턴:
+           - 특정 시간대에 오차가 집중되는지 확인
+           - 연속된 시점의 오차 방향성 분석
+        """
+            
+    except Exception as e:
+        print(f"❌ 예측 파일 분석 중 오류: {str(e)}")
+        print("파일 경로나 JSON 형식을 확인해주세요.")
+        print(f"생성 시간: {data['timestamp']}")
+        
+        stats = data['statistics']
+        print(f"\n📈 통계 정보:")
+        # 실제값과 예측값의 범위 비교 - 모델이 적절한 범위에서 예측하는지 확인
+        print(f"   실제값 범위: {stats['actual_min']:.3f} ~ {stats['actual_max']:.3f}")
+        print(f"   예측값 범위: {stats['predicted_min']:.3f} ~ {stats['predicted_max']:.3f}")
+        # 오차 지표들 - 모델의 정확도 평가
+        print(f"   평균 절대 오차 (MAE): {stats['mean_absolute_error']:.4f}")  # 평균적으로 얼마나 틀렸는지
+        print(f"   제곱근 평균 제곱 오차 (RMSE): {stats['rmse']:.4f}")  # 큰 오차에 더 민감한 지표
+        
+        # 최근 5개 예측 결과 출력 - 모델의 최신 성능 확인
+        predictions = data['predictions']
+        print(f"\n🔍 최근 5개 예측 결과:")
+        for pred in predictions[-5:]:  # 마지막 5개 선택
+            error_pct = pred['percentage_error']
+            # 각 시점별로 실제값, 예측값, 오차율 표시
+            print(f"   {pred['date'][:19]}: 실제={pred['actual_value']:.3f}, 예측={pred['predicted_value']:.3f}, 오차={error_pct:.2f}%")
+            
+    except Exception as e:
+        print(f"❌ 예측 파일 분석 중 오류: {str(e)}")
+
+# ✅ 메인 실행부
+if __name__ == "__main__":
+    print("🧪 LSTM 멀티 실험 자동화 시스템 (예측값 기록 포함)")
+    print("=" * 60)
+    print("📋 이 시스템의 기능:")
+    print("   1. 여러 LSTM 모델을 자동으로 학습 및 평가")
+    print("   2. 예측 결과를 상세한 JSON 파일로 저장")
+    print("   3. 성능 지표별 모델 순위 자동 생성")
+    print("   4. 시각화 그래프 및 분석 리포트 생성")
+    print("=" * 60)
+    
+    choice = input("실행 모드를 선택하세요:\n1. 멀티 실험 (JSON 파일 기반)\n2. 단일 실험 (수동 입력)\n3. 예측 파일 분석\n선택 (1, 2, 또는 3): ").strip()
+    
+    if choice == "1":
+        print("\n📖 멀티 실험 모드 설명:")
+        print("   - experiments.json 파일의 설정에 따라 여러 실험을 순차 실행")
+        print("   - 각 실험별로 모델 학습, 예측, 성능 평가를 자동화")
+        print("   - 결과를 종합하여 성능 순위표 자동 생성")
+        
+        config_file = input("설정 파일명 (기본값: experiments.json): ").strip() or "experiments.json"
+        results = run_multiple_experiments(config_file)
+        
+        # 실험 완료 후 추가 옵션
+        if results and any(r['status'] == 'success' for r in results):
+            print(f"\n🎉 모든 실험이 완료되었습니다!")
+            print(f"📁 다음 파일들이 생성되었습니다:")
+            print(f"   - comprehensive_experiment_results.json (종합 결과)")
+            print(f"     → 모든 실험의 성능 순위 및 요약 정보")
+            print(f"   - predictions/ 폴더 (개별 예측 파일들)")
+            print(f"     → 각 모델별 상세 예측 데이터 (시간별 실제값 vs 예측값)")
+            print(f"   - graphImage/ 폴더 (시각화 그래프들)")
+            print(f"     → 학습 곡선, 예측 결과 그래프들")
+            print(f"   - saved_models/ 폴더 (학습된 모델들)")
+            print(f"     → 재사용 가능한 LSTM 모델 파일들 (.h5)")
+            
+    elif choice == "2":
+        print("\n📖 단일 실험 모드 안내:")
+        print("   현재 단일 실험은 JSON 설정 파일을 통해 실행됩니다.")
+        print("   아래 예시를 참고하여 experiments.json 파일을 생성하세요.")
+        print("\n📝 JSON 설정 파일 예시:")
+        
+        example_config = {
+            "experiments": [
+                {
+                    "name": "테스트 실험",                    # 실험 이름 (결과 식별용)
+                    "tablename": "your_table",              # 데이터베이스 테이블명
+                    "modelName": "test_model",              # 저장될 모델 파일명
+                    "dateColumn": "date_column",            # 날짜/시간 컬럼명
+                    "studyColumns": "col1,col2,col3",       # 학습에 사용할 컬럼들 (쉼표 구분)
+                    "targetColumn": "target_col",           # 예측 대상 컬럼명
+                    "r_epochs": 50,                         # 학습 에포크 수
+                    "r_batchSize": 32,                      # 배치 크기
+                    "r_validationSplit": 0.2,               # 검증 데이터 비율 (20%)
+                    "r_seqLen": 60,                         # 시퀀스 길이 (과거 몇 개 시점 참조)
+                    "r_predDays": 1                         # 예측 일수 (몇 시점 후 예측)
+                }
+            ]
+        }
+        print(json.dumps(example_config, indent=2, ensure_ascii=False))
+        print("\n💡 설정 파라미터 설명:")
+        print("   - r_epochs: 학습 반복 횟수 (많을수록 정확하지만 과적합 위험)")
+        print("   - r_seqLen: 과거 데이터 참조 범위 (길수록 장기 패턴 학습)")
+        print("   - r_predDays: 예측 미래 시점 (1=다음 시점, 2=2시점 후)")
+        
+    elif choice == "3":
+        print("\n📖 예측 파일 분석 모드 설명:")
+        print("   - 이전에 생성된 예측 JSON 파일을 상세 분석")
+        print("   - 모델 성능 지표, 예측 패턴, 오차 분포 등을 확인")
+        print("   - 예측 품질 검증 및 모델 개선 방향 제시")
+        
+        prediction_file = input("분석할 예측 파일 경로를 입력하세요: ").strip()
+        if prediction_file and os.path.exists(prediction_file):
+            analyze_prediction_file(prediction_file)
+        else:
+            print("❌ 파일을 찾을 수 없습니다.")
+            # predictions 폴더에서 사용 가능한 파일 목록 표시
+            if os.path.exists(prediction_path):
+                pred_files = [f for f in os.listdir(prediction_path) if f.endswith('_predictions.json')]
+                if pred_files:
+                    print(f"\n📁 사용 가능한 예측 파일들 (predictions/ 폴더):")
+                    for i, file in enumerate(pred_files, 1):
+                        print(f"   {i}. {file}")
+                        
+                    print(f"\n💡 파일 선택 방법:")
+                    print(f"   전체 경로 입력: predictions/파일명.json")
+                    print(f"   또는 위 목록의 번호 입력도 가능합니다.")
+    else:
+        print("❌ 잘못된 선택입니다.")
+        print("💡 1, 2, 3 중 하나의 숫자를 입력해주세요.")
+
+"""
+🔧 시스템 활용 가이드:
+
+1. 실험 설계 단계:
+   - experiments.json에서 다양한 하이퍼파라미터 조합 설정
+   - 여러 시퀀스 길이, 에포크 수 등을 실험하여 최적 모델 탐색
+
+2. 실험 실행 단계:
+   - 모드 1로 멀티 실험 실행
+   - 각 모델별 학습 진행상황 실시간 모니터링
+   - 자동 성능 평가 및 순위 산정
+
+3. 결과 분석 단계:
+   - comprehensive_experiment_results.json으로 전체 순위 확인
+   - predictions/*.json으로 개별 모델의 상세 예측 분석
+   - graphImage/*.png로 시각적 결과 검토
+
+4. 모델 활용 단계:
+   - saved_models/*.h5로 최고 성능 모델 재사용
+   - 예측 JSON 데이터로 추가 분석이나 리포팅
+   - 성능 지표 기반으로 프로덕션 모델 선택
+
+💡 모델 성능 해석 가이드:
+- 정확도 90% 이상: 우수 (실용적 활용 가능)
+- 정확도 80-90%: 양호 (개선 여지 있음)
+- R² Score 0.9 이상: 매우 좋은 설명력
+- 방향성 정확도 60% 이상: 트렌드 예측 능력 양호
+"""

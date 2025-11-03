@@ -1,0 +1,43 @@
+{
+  "experiments": [
+    {
+      "name": "solar-hybrid-seq-2-test-20251017-test-no-add-usage_kwh",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,usage_kwh",
+      "targetColumn": "usage_kwh",
+      "modelName": "solar-hybrid-seq-2-test-20251017-test-no-add-usage_kwh",
+      "r_epochs": 70,
+      "r_batchSize": 32,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 192,
+      "r_predDays": 1
+    },
+    {
+      "name": "usage-8day-cycle-v1",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,usage_kwh",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-8day-cycle-v1",
+      "r_epochs": 100,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 768,
+      "r_predDays": 1
+    },
+    {
+      "name": "usage-6day-optimal",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "is_workday,usage_kwh",
+      "targetColumn": "usage_kwh",
+      "modelName": "usage-6day-optimal",
+      "r_epochs": 90,
+      "r_batchSize": 24,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 576,
+      "r_predDays": 1
+    }
+  ]
+}

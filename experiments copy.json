@@ -1,0 +1,95 @@
+{
+  "experiments": [
+    {
+      "name": "input15m-1",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,time_point_new",
+      "targetColumn": "solar_kwh",
+      "modelName": "input15m-1",
+      "r_epochs": 80,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 14,
+      "r_predDays": 1
+    },
+    {
+      "name": "input15m-2",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,time_point_new",
+      "targetColumn": "solar_kwh",
+      "modelName": "input15m-2",
+      "r_epochs": 80,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 28,
+      "r_predDays": 2
+    },
+    {
+      "name": "input15m-3",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,time_point_new",
+      "targetColumn": "solar_kwh",
+      "modelName": "input15m-3",
+      "r_epochs": 80,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 42,
+      "r_predDays": 3
+    },
+    {
+      "name": "input15m-4",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,time_point_new",
+      "targetColumn": "solar_kwh",
+      "modelName": "input15m-4",
+      "r_epochs": 80,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 56,
+      "r_predDays": 4
+    },
+    {
+      "name": "input15m-5",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,time_point_new",
+      "targetColumn": "solar_kwh",
+      "modelName": "input15m-5",
+      "r_epochs": 80,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 70,
+      "r_predDays": 5
+    },
+    {
+      "name": "input15m-6",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,time_point_new",
+      "targetColumn": "solar_kwh",
+      "modelName": "input15m-6",
+      "r_epochs": 80,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 84,
+      "r_predDays": 6
+    },
+    {
+      "name": "input15m-7",
+      "tablename": "lstm_input_15m_new",
+      "dateColumn": "time_point",
+      "studyColumns": "solar_kwh,usage_kwh,time_point_new",
+      "targetColumn": "solar_kwh",
+      "modelName": "input15m-7",
+      "r_epochs": 80,
+      "r_batchSize": 16,
+      "r_validationSplit": 0.1,
+      "r_seqLen": 98,
+      "r_predDays": 7
+    }
+  ]
+}
