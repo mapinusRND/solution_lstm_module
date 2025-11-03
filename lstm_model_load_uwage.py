@@ -111,6 +111,11 @@ def load_new_data(tablename, dateColumn, studyColumns):
             SELECT {studyColumns},{dateColumn}
             FROM carbontwin.{tablename}
             WHERE {dateColumn} IS NOT NULL
+              AND time_point >= (
+                    SELECT MAX(time_point) - INTERVAL '1 days'
+                    FROM carbontwin.{tablename}
+                    WHERE time_point IS NOT null
+                )
             ORDER BY {dateColumn} ASC
             """
         
