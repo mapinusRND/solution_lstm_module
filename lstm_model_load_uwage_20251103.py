@@ -56,8 +56,8 @@ def get_db_engine():
     Returns:
         SQLAlchemy Engine 객체
     """
-    # connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
-    connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
+    connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
+    # connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
     return create_engine(connection_string)
 
 # ============================================================================
@@ -189,7 +189,7 @@ def load_trained_model(model_name):
 # 실제 데이터로 모델 검증
 # ============================================================================
 
-def validate_with_actual_data(model, scaler, config, data, validation_days=1):
+def validate_with_actual_data(model, scaler, config, data, validation_days=7):
     """
     최근 N일의 실제 데이터로 모델 성능 검증 (개선된 역정규화 방식)
     
@@ -368,7 +368,21 @@ def predict_future_stable(model, scaler, config, data, future_steps=672, histori
     def calculate_workday_holiday_patterns(data_for_prediction, dates, targetColumn):
         """
         과거 데이터에서 평일/휴일 패턴을 자동으로 학습
-        (데이터 부족 시 안전하게 처리)
+        
+        Args:
+            data_for_prediction (DataFrame): 예측용 데이터
+            dates (Series): 날짜 데이터
+            targetColumn (str): 타겟 컬럼명
+        
+        Returns:
+            tuple: (patterns, weekday_details)
+                - patterns: 평일/휴일 통계 정보
+                - weekday_details: 요일별 상세 정보
+        
+        학습 내용:
+            - 평일 (월~금)과 휴일 (토~일)의 통계적 특성
+            - 각 요일별 평균, 표준편차, 0값 비율 등
+            - 이후 예측값의 합리성 검증 및 안정화에 활용
         """
         print(f"   🔍 평일/휴일 패턴 학습 중...")
         
@@ -381,38 +395,30 @@ def predict_future_stable(model, scaler, config, data, future_steps=672, histori
         weekday_values = target_values[weekday_mask]
         weekend_values = target_values[weekend_mask]
         
-        # 🔥 평일/휴일 통계 정보 계산 (데이터 없을 경우 대비)
-        def safe_stats(values, name):
-            """빈 배열에도 안전한 통계 계산"""
-            if len(values) == 0:
-                print(f"      ⚠️  {name} 데이터 없음 → 기본값 사용")
-                return {
-                    "mean": 0.0,
-                    "std": 0.0,
-                    "median": 0.0,
-                    "min": 0.0,
-                    "max": 0.0,
-                    "q25": 0.0,
-                    "q75": 0.0,
-                    "zero_ratio": 1.0,
-                    "count": 0
-                }
-            
-            return {
-                "mean": float(np.mean(values)),
-                "std": float(np.std(values)),
-                "median": float(np.median(values)),
-                "min": float(np.min(values)),
-                "max": float(np.max(values)),
-                "q25": float(np.percentile(values, 25)),
-                "q75": float(np.percentile(values, 75)),
-                "zero_ratio": float(np.sum(values == 0) / len(values)),
-                "count": len(values)
-            }
-        
+        # 평일/휴일 통계 정보 계산
         patterns = {
-            "workday": safe_stats(weekday_values, "평일"),
-            "holiday": safe_stats(weekend_values, "휴일")
+            "workday": {
+                "mean": float(np.mean(weekday_values)),
+                "std": float(np.std(weekday_values)),
+                "median": float(np.median(weekday_values)),
+                "min": float(np.min(weekday_values)),
+                "max": float(np.max(weekday_values)),
+                "q25": float(np.percentile(weekday_values, 25)),
+                "q75": float(np.percentile(weekday_values, 75)),
+                "zero_ratio": float(np.sum(weekday_values == 0) / len(weekday_values)),
+                "count": len(weekday_values)
+            },
+            "holiday": {
+                "mean": float(np.mean(weekend_values)),
+                "std": float(np.std(weekend_values)),
+                "median": float(np.median(weekend_values)),
+                "min": float(np.min(weekend_values)),
+                "max": float(np.max(weekend_values)),
+                "q25": float(np.percentile(weekend_values, 25)),
+                "q75": float(np.percentile(weekend_values, 75)),
+                "zero_ratio": float(np.sum(weekend_values == 0) / len(weekend_values)),
+                "count": len(weekend_values)
+            }
         }
         
         # 요일별 상세 정보 계산
@@ -441,7 +447,24 @@ def predict_future_stable(model, scaler, config, data, future_steps=672, histori
     def adaptive_stabilization(pred_original, next_date, patterns):
         """
         ✅ 예측값을 거의 그대로 사용 (극단적 이상치만 제거)
-        (데이터 부족 시 안전하게 처리)
+        
+        Args:
+            pred_original (float): 모델이 예측한 원본 값
+            next_date (datetime): 예측 시점
+            patterns (dict): 학습된 평일/휴일 패턴
+        
+        Returns:
+            tuple: (조정된 예측값, 안정화 여부, 안정화 이유, 요일명, 요일 타입, 아이콘)
+        
+        목표:
+        - 평일: 모델 예측 그대로 (101 kWh 정도)
+        - 휴일: 모델 예측 그대로 (0 kWh 근처)
+        - 명백한 오류만 제거 (음수, 비현실적 대량값)
+        
+        안정화 범위:
+        - 5σ (시그마) 범위만 제한 (99.9999% 포함)
+        - 평균 회귀, IQR 제한, 랜덤 대체 등 제거
+        - 모델 예측을 최대한 신뢰
         """
         day_of_week = next_date.weekday()
         is_workday = day_of_week < 5
@@ -465,13 +488,11 @@ def predict_future_stable(model, scaler, config, data, future_steps=672, histori
         stabilization_applied = False
         stabilization_reason = ""
         
-        # 🔥 데이터가 없는 경우 (count == 0) 또는 표준편차가 0인 경우
-        if pattern["count"] == 0 or std == 0:
-            # 안정화 없이 그대로 사용 (단, 음수만 제거)
-            pred_original = max(0, pred_original)
-            return pred_original, False, "데이터 부족(안정화 스킵)", weekday_name, day_type, icon
-        
-        # 정상적인 안정화 (5σ 범위)
+        # ====================================================================
+        # ✅ 매우 느슨한 범위 (5σ) - 99.9999% 범위
+        # 정규분포에서 ±5σ는 거의 모든 값을 포함
+        # 이 범위를 벗어나는 값만 극단적 이상치로 판단
+        # ====================================================================
         safe_min = max(0, mean - 5 * std)
         safe_max = mean + 5 * std
         
@@ -485,7 +506,13 @@ def predict_future_stable(model, scaler, config, data, future_steps=672, histori
             stabilization_applied = True
             stabilization_reason = f"극단적 최대값 ({safe_max:.1f} 초과)"
         
-        # 음수 방지
+        # ❌ 제거된 안정화 기법들:
+        # - 평균 회귀 (mean reversion): 모델 예측을 평균으로 강제로 끌어당기지 않음
+        # - IQR 제한 (Interquartile Range): Q1-Q3 범위 제한 없음
+        # - 랜덤 대체: 패턴 기반 랜덤값 생성 없음
+        # → 모델이 학습한 패턴을 신뢰하고 그대로 사용!
+        
+        # 음수 방지 (물리적으로 불가능)
         pred_original = max(0, pred_original)
         
         return pred_original, stabilization_applied, stabilization_reason, weekday_name, day_type, icon
@@ -517,9 +544,9 @@ def predict_future_stable(model, scaler, config, data, future_steps=672, histori
         day_of_week = next_date.weekday()
         
         # week_code: 요일 코드 업데이트 (1=월 ~ 7=일)
-        # if 'week_code' in study_columns_list:
-        #     idx = study_columns_list.index('week_code')
-        #     next_row[idx] = min(day_of_week + 1, 6)
+        if 'week_code' in study_columns_list:
+            idx = study_columns_list.index('week_code')
+            next_row[idx] = min(day_of_week + 1, 6)
         
         # is_weekend: 주말 여부 (토, 일 = 1)
         if 'is_weekend' in study_columns_list:
@@ -579,33 +606,26 @@ def predict_future_stable(model, scaler, config, data, future_steps=672, histori
             historical_std = data_for_prediction[targetColumn].std()
         
         # 학습된 패턴 출력
-        # 학습된 패턴 출력 (메인 예측 로직 내)
         print(f"\n   📊 학습된 패턴:")
         print(f"      🏢 평일 (월~금):")
-        if patterns['workday']['count'] > 0:
-            print(f"         - 평균: {patterns['workday']['mean']:6.2f} kWh (±{patterns['workday']['std']:5.2f})")
-            print(f"         - 범위: [{patterns['workday']['min']:.2f}, {patterns['workday']['max']:.2f}]")
-            print(f"         - 0값 비율: {patterns['workday']['zero_ratio']*100:4.1f}%")
-            print(f"         - 데이터 수: {patterns['workday']['count']:,}개")
-        else:
-            print(f"         ⚠️  데이터 없음 (기본값 사용)")
-
+        print(f"         - 평균: {patterns['workday']['mean']:6.2f} kWh (±{patterns['workday']['std']:5.2f})")
+        print(f"         - 범위: [{patterns['workday']['min']:.2f}, {patterns['workday']['max']:.2f}]")
+        print(f"         - 0값 비율: {patterns['workday']['zero_ratio']*100:4.1f}%")
+        print(f"         - 데이터 수: {patterns['workday']['count']:,}개")
+        
         print(f"\n      🏖️ 휴일 (토, 일):")
-        if patterns['holiday']['count'] > 0:
-            print(f"         - 평균: {patterns['holiday']['mean']:6.2f} kWh (±{patterns['holiday']['std']:5.2f})")
-            print(f"         - 범위: [{patterns['holiday']['min']:.2f}, {patterns['holiday']['max']:.2f}]")
-            print(f"         - 0값 비율: {patterns['holiday']['zero_ratio']*100:4.1f}%")
-            print(f"         - 데이터 수: {patterns['holiday']['count']:,}개")
-        else:
-            print(f"         ⚠️  데이터 없음 (기본값 사용)")
-
+        print(f"         - 평균: {patterns['holiday']['mean']:6.2f} kWh (±{patterns['holiday']['std']:5.2f})")
+        print(f"         - 범위: [{patterns['holiday']['min']:.2f}, {patterns['holiday']['max']:.2f}]")
+        print(f"         - 0값 비율: {patterns['holiday']['zero_ratio']*100:4.1f}%")
+        print(f"         - 데이터 수: {patterns['holiday']['count']:,}개")
+        
         print(f"\n   📅 요일별 상세:")
         for day_idx in range(7):
             if day_idx in weekday_details:
                 detail = weekday_details[day_idx]
                 icon = "🏢" if detail["is_workday"] else "🏖️"
                 print(f"      {icon} {detail['name']}요일: {detail['mean']:6.2f} kWh "
-                    f"(±{detail['std']:5.2f}) | 0값: {detail['zero_ratio']*100:4.1f}%")
+                      f"(±{detail['std']:5.2f}) | 0값: {detail['zero_ratio']*100:4.1f}%")
         
         print(f"\n   🔄 역정규화: 전체 피처 벡터 방식")
         print(f"   ✅ 안정화: 5σ 범위 (극단적 이상치만 제거)")
@@ -861,7 +881,7 @@ def save_predictions_to_db(prediction_result, target_table="usage_generation_for
 # 메인 실행 함수
 # ============================================================================
 
-def main(model_name, tablename, future_steps=672, save_to_db_flag=True, validation_days=1):
+def main(model_name, tablename, future_steps=672, save_to_db_flag=True, validation_days=7):
     """
     전력 사용량 예측 전체 프로세스 실행
     
@@ -900,64 +920,32 @@ def main(model_name, tablename, future_steps=672, save_to_db_flag=True, validati
     if new_data is None or new_data.empty:
         return None
     
-    # 🔥 데이터 충분성 체크
-    seq_len = int(config['r_seqLen'])
-    r_predDays = int(config.get('r_predDays', 1))
-    min_required_for_validation = seq_len + (validation_days * 96) + r_predDays
-    min_required_for_prediction = seq_len  # 예측만 하려면 시퀀스 길이만 있으면 됨
+    # 3) 모델 검증 (최근 N일 데이터로 성능 확인)
+    validation_result = validate_with_actual_data(model, scaler, config, new_data, validation_days)
     
-    print(f"\n📏 데이터 체크:")
-    print(f"   현재 데이터: {len(new_data)}행")
-    print(f"   예측 최소 요구: {min_required_for_prediction}행")
-    print(f"   검증 최소 요구: {min_required_for_validation}행")
-    
-    # 예측조차 불가능한 경우
-    if len(new_data) < min_required_for_prediction:
-        print(f"\n❌ 데이터 부족: 예측 불가")
-        print(f"   최소 {min_required_for_prediction}행 필요 (현재: {len(new_data)}행)")
-        return None
-    
-    # 검증 가능 여부 판단
-    validation_result = None
-    if len(new_data) >= min_required_for_validation:
-        print(f"\n✅ 검증 가능 → 검증 수행")
-        # 3) 모델 검증
-        validation_result = validate_with_actual_data(
-            model, scaler, config, new_data, validation_days
+    # 4) 미래 예측 및 DB 저장
+    if validation_result:
+        val_accuracy = validation_result['statistics']['accuracy']
+        print(f"\n✅ 검증 정확도: {val_accuracy:.2f}%")
+        
+        # 미래 예측 수행
+        future_result = predict_future_stable(
+            model, scaler, config, new_data, future_steps,
+            historical_mean=validation_result.get('historical_mean'),
+            historical_std=validation_result.get('historical_std')
         )
         
-        if validation_result:
-            val_accuracy = validation_result['statistics']['accuracy']
-            print(f"\n✅ 검증 정확도: {val_accuracy:.2f}%")
-    else:
-        print(f"\n⚠️  데이터 부족: 검증 건너뛰고 예측만 수행")
-        print(f"   (검증하려면 {min_required_for_validation}행 필요)")
-    
-    # 4) 미래 예측 수행 (검증 결과 있으면 활용, 없으면 None)
-    print(f"\n🔮 미래 예측 시작 ({future_steps}스텝 = {future_steps//96}일)")
-    
-    future_result = predict_future_stable(
-        model, scaler, config, new_data, future_steps,
-        historical_mean=validation_result.get('historical_mean') if validation_result else None,
-        historical_std=validation_result.get('historical_std') if validation_result else None
-    )
-    
-    # 5) DB 저장
-    if future_result and save_to_db_flag:
-        success, fail = save_predictions_to_db(future_result)
-        if success > 0:
-            print(f"\n✅ {success}건 저장")
-        if fail > 0:
-            print(f"⚠️  {fail}건 저장 실패")
+        # DB 저장
+        if future_result and save_to_db_flag:
+            success, fail = save_predictions_to_db(future_result)
+            if success > 0:
+                print(f"\n✅ {success}건 저장")
     
     print(f"\n{'='*80}")
     print("🎉 완료!")
     print("="*80)
     
-    return {
-        "validation": validation_result,
-        "future_prediction": future_result
-    }
+    return {"validation": validation_result, "future_prediction": future_result}
 
 # ============================================================================
 # 스크립트 직접 실행 시
@@ -979,34 +967,22 @@ if __name__ == "__main__":
             tablename=tablename,
             future_steps=672,      # 7일 예측 (96 * 7)
             save_to_db_flag=True,  # DB 저장 활성화
-            validation_days=1      # 검증 일수 (데이터 부족 시 자동 스킵)
+            validation_days=7      # 최근 7일로 검증
         )
         
         # 최종 결과 출력
-        if result:
-            if result.get('validation'):
-                val_stats = result['validation']['statistics']
-                print(f"\n{'='*80}")
-                print(f"📊 최종 요약")
-                print(f"{'='*80}")
-                print(f"   정확도: {val_stats['accuracy']:.2f}%")
-                print(f"   MAPE:   {val_stats['mape']:.2f}%")
-                print(f"{'='*80}")
-            elif result.get('future_prediction'):
-                print(f"\n{'='*80}")
-                print(f"📊 최종 요약 (검증 없음)")
-                print(f"{'='*80}")
-                stats = result['future_prediction']['statistics']
-                print(f"   예측값 범위: {stats['min_predicted']:.2f} ~ {stats['max_predicted']:.2f} kWh")
-                print(f"   예측값 평균: {stats['mean_predicted']:.2f} kWh")
-                print(f"{'='*80}")
+        if result and result.get('validation'):
+            val_stats = result['validation']['statistics']
+            print(f"\n{'='*80}")
+            print(f"📊 최종 요약")
+            print(f"{'='*80}")
+            print(f"   정확도: {val_stats['accuracy']:.2f}%")
+            print(f"   MAPE:   {val_stats['mape']:.2f}%")
+            print(f"{'='*80}")
             
     except KeyboardInterrupt:
         print("\n\n⚠️  중단")
     except Exception as e:
-        print(f"\n❌ 오류: {str(e)}")
-        import traceback
-        traceback.print_exc()
         print(f"\n❌ 오류: {str(e)}")
         import traceback
         traceback.print_exc()

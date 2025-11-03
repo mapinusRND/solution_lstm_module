@@ -27,15 +27,17 @@ from datetime import datetime, timedelta
 # -----------------------------------------------------------------------------
 # 환경 설정 블록
 # -----------------------------------------------------------------------------
-ENV = os.getenv('FLASK_ENV', 'local')
-# if ENV == 'local':
-#     # 개발(로컬) 환경일 때의 루트 경로
-#     root = "D:/work/lstm"
-# else:
-#     # 배포(컨테이너 등) 환경일 때의 루트 경로
-#     root = "/app/webfiles/lstm"
+ENV = os.getenv('FLASK_ENV', 'server')
+if ENV == 'local':
+    # 개발(로컬) 환경일 때의 루트 경로
+     root = "D:/work/lstm"
+    # root = "/Users/yourim/Documents/file_test"
+else:
+    # 배포(컨테이너 등) 환경일 때의 루트 경로
+    root = "/usr/local/tomcat/webapps/lstm"
 
 root = "D:/work/lstm"
+
 # 모델과 예측 결과를 저장/불러올 디렉토리 경로
 model_path = os.path.abspath(root + "/saved_models")
 
@@ -59,8 +61,8 @@ def get_db_engine():
         - connection_string은 환경별 비밀번호/호스트에 따라 수정 필요
         - 운영 환경에서는 비밀번호를 코드에 직접 두지 말고 환경변수/시크릿 매니저 사용 권장
     """
-    # connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
-    connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
+    # connection_string = "postgresql://postgres:carbontwin@172.17.0.2:5432/postgres"
+    connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
     return create_engine(connection_string)
 
 def convert_to_serializable(obj):
@@ -113,12 +115,7 @@ def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date
             query = f"""
             SELECT {studyColumns},{dateColumn}
             FROM carbontwin.{tablename}
-            WHERE {dateColumn} IS NOT NULL  
-              AND time_point >= (
-                    SELECT MAX(time_point) - INTERVAL '1 days'
-                    FROM carbontwin.{tablename}
-                    WHERE time_point IS NOT null
-                )
+            WHERE {dateColumn} IS NOT NULL
             ORDER BY {dateColumn} ASC
             """
         else:
@@ -435,31 +432,6 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
         # 예측에 사용할 입력 부분만 float 타입으로 변환
         data_for_prediction = new_data[study_columns_list].astype(float)
         
-         # 🔥 NULL 체크 및 처리
-        null_count = data_for_prediction.isnull().sum().sum()
-        if null_count > 0:
-            print(f"⚠️  경고: {null_count}개의 NULL 값 발견!")
-            print(f"   NULL 값 분포:\n{data_for_prediction.isnull().sum()}")
-            
-            # 처리 방법 선택
-            # 옵션 1: 이전 값으로 채우기 (시계열 데이터에 적합)
-            data_for_prediction = data_for_prediction.fillna(method='ffill')
-            
-            # 옵션 2: 다음 값으로 채우기
-            # data_for_prediction = data_for_prediction.fillna(method='bfill')
-            
-            # 옵션 3: 평균값으로 채우기
-            # data_for_prediction = data_for_prediction.fillna(data_for_prediction.mean())
-            
-            # 옵션 4: 0으로 채우기
-            # data_for_prediction = data_for_prediction.fillna(0)
-            
-            # 여전히 NULL이 남아있는지 확인
-            remaining_nulls = data_for_prediction.isnull().sum().sum()
-            if remaining_nulls > 0:
-                print(f"❌ 오류: {remaining_nulls}개의 NULL을 처리할 수 없습니다!")
-                return None
-        
         # 입력 데이터가 시퀀스 길이보다 작으면 에러
         if len(data_for_prediction) < seq_len:
             raise ValueError(f"데이터 부족: {len(data_for_prediction)}개 (최소 {seq_len}개 필요)")
@@ -652,7 +624,6 @@ def save_predictions_to_db_with_eps(prediction_result, target_table="solar_gener
         print(f"\n💾 예측 결과 DB 저장 시작...")
         print(f"   - 대상 테이블: carbontwin.{target_table}")
         print(f"   - 저장할 데이터: {len(predictions)}건")
-        print(f"   - 저장할 데이터: {predictions}건")
         
         success_count = 0
         fail_count = 0
@@ -679,8 +650,8 @@ def save_predictions_to_db_with_eps(prediction_result, target_table="solar_gener
                     INSERT INTO carbontwin.{target_table} 
                         (time_point, forecast_solar_kwh, reg_dt)
                     VALUES 
-                        (:time_point, :forecast_value, CURRENT_TIMESTAMP) 
-                    """) 
+                        (:time_point, :forecast_value, CURRENT_TIMESTAMP)
+                    """)
                     
                     conn.execute(
                         insert_query,

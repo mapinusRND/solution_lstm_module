@@ -1,17 +1,17 @@
 {
   "experiments": [
     {
-      "name": "usage-kwh-model-4",
-      "tablename": "lstm_input_15m_new",
+      "name": "usage_kwh_model",
+      "tablename": "lstm_input_15m",
       "dateColumn": "time_point",
-      "studyColumns": "is_workday,week_code,usage_kwh",
+      "studyColumns": "usage_kwh,is_workday",
       "targetColumn": "usage_kwh",
-      "modelName": "usage-kwh-model-4",
-      "r_epochs": 80,
-      "r_batchSize": 64,
-      "r_validationSplit": 0.15,
-      "r_seqLen": 192,
-      "r_predDays": 1
+      "modelName": "usage_kwh_model",
+      "r_epochs": 20,
+      "r_batchSize": 48,
+      "r_validationSplit": 0.2,
+      "r_seqLen": 96,
+      "r_predDays": 7
     }
   ]
 }
