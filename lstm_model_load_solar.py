@@ -59,8 +59,8 @@ def get_db_engine():
         - connection_string은 환경별 비밀번호/호스트에 따라 수정 필요
         - 운영 환경에서는 비밀번호를 코드에 직접 두지 말고 환경변수/시크릿 매니저 사용 권장
     """
-    # connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
-    connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
+    connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
+    # connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
     return create_engine(connection_string)
 
 def convert_to_serializable(obj):

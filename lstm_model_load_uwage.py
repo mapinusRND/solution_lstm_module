@@ -56,8 +56,8 @@ def get_db_engine():
     Returns:
         SQLAlchemy Engine 객체
     """
-    # connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
-    connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
+    connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
+    # connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
     return create_engine(connection_string)
 
 # ============================================================================
