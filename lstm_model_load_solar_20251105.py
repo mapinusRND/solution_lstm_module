@@ -4,11 +4,11 @@ Title   : EPS 임계값 필터링이 적용된 LSTM 예측 스크립트
 Author  : 주성중 / (주)맵인어스
 Description: 
     - 학습된 LSTM 모델로 신규 데이터 예측 수행
-    - 최근 1일치 데이터로 미래 7일 예측
     - EPS 임계값 기반 예측 신뢰도 필터링 추가
+    - 미래값 예측 기능 포함
     - PostgreSQL DB 저장 기능
-Version : 2.7
-Date    : 2025-11-05
+Version : 2.4
+Date    : 2025-10-22
 """
 
 import os
@@ -28,25 +28,53 @@ from datetime import datetime, timedelta
 # 환경 설정 블록
 # -----------------------------------------------------------------------------
 ENV = os.getenv('FLASK_ENV', 'local')
+# if ENV == 'local':
+#     # 개발(로컬) 환경일 때의 루트 경로
+#     root = "D:/work/lstm"
+# else:
+#     # 배포(컨테이너 등) 환경일 때의 루트 경로
+#     root = "/app/webfiles/lstm"
 
 root = "D:/work/lstm"
+# 모델과 예측 결과를 저장/불러올 디렉토리 경로
 model_path = os.path.abspath(root + "/saved_models")
 
 # -----------------------------------------------------------------------------
 # 🔥 EPS 임계값 설정 (전역 변수)
 # -----------------------------------------------------------------------------
+# EPS: Very small energy outputs를 무시하기 위한 임계값 (kWh 단위 예시)
+# 현재는 데이터에 임계값을 주지 않고 학습
+# 임계값을 주고싶은경우 PREDICTION_EPS_THRESHOLD 값을 조절
 PREDICTION_EPS_THRESHOLD = 0
 
 # -----------------------------------------------------------------------------
 # DB 연결 함수
 # -----------------------------------------------------------------------------
 def get_db_engine():
-    """PostgreSQL 데이터베이스 연결 엔진 생성"""
+    """PostgreSQL 데이터베이스 연결 엔진 생성
+
+    반환:
+        sqlalchemy Engine 객체
+    주의:
+        - connection_string은 환경별 비밀번호/호스트에 따라 수정 필요
+        - 운영 환경에서는 비밀번호를 코드에 직접 두지 말고 환경변수/시크릿 매니저 사용 권장
+    """
+    # connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
+    # connection_string = "postgresql://postgres:mapinus@1004@10.10.10.201:5434/postgres"
     connection_string = "postgresql://postgres:mapinus%401004@10.10.10.201:5434/postgres"
+    # connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
     return create_engine(connection_string)
 
 def convert_to_serializable(obj):
-    """NumPy 및 Pandas의 특수 타입을 JSON 직렬화 가능한 Python 기본 타입으로 변환"""
+    """NumPy 및 Pandas의 특수 타입을 JSON 직렬화 가능한 Python 기본 타입으로 변환
+
+    사용처:
+        - 예측 결과를 JSON으로 반환하거나 DB에 저장할 때 직렬화 문제 방지
+    지원 타입:
+        - np.ndarray -> list
+        - np.integer / np.floating -> int / float
+        - pandas Timestamp / datetime -> ISO 8601 문자열
+    """
     if isinstance(obj, np.ndarray):
         return obj.tolist()
     elif isinstance(obj, (np.integer, np.int64, np.int32)):
@@ -62,24 +90,41 @@ def convert_to_serializable(obj):
 # -----------------------------------------------------------------------------
 # 신규 데이터 로드
 # -----------------------------------------------------------------------------
-def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date=None, days_limit=1):
-    """PostgreSQL DB에서 예측할 신규 데이터를 로드 (최근 1일치)"""
+def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date=None, days_limit=7):
+    """PostgreSQL DB에서 예측할 신규 데이터를 로드
+
+    파라미터:
+        tablename: DB 테이블 이름 (카타로그 없이 테이블명만)
+        dateColumn: 시간 컬럼명 (예: 'time_point')
+        studyColumns: 예측에 사용되는 컬럼들의 문자열 (콤마 구분)
+        start_date, end_date: 기간 필터 (문자열 또는 None)
+        days_limit: 사용되진 않지만 기본 파라미터로 남겨둠 (호출부 호환성 유지)
+
+    반환값:
+        pandas DataFrame (성공) 또는 None (실패)
+    예외/주의:
+        - 쿼리에서 사용되는 컬럼명은 SQL 인젝션에 취약할 수 있으니
+          외부 입력을 그대로 넣는 경우 검증 필요
+        - 네트워크/DB 연결 실패 시 None 리턴
+    """
     try:
         engine = get_db_engine()
         
         if start_date is None and end_date is None:
+            # 날짜 필터가 없을 때: 전체 데이터(정렬 포함) 조회
             query = f"""
             SELECT {studyColumns},{dateColumn}
             FROM carbontwin.{tablename}
             WHERE {dateColumn} IS NOT NULL  
               AND time_point >= (
-                    SELECT MAX(time_point) - INTERVAL '{days_limit} days'
+                    SELECT MAX(time_point) - INTERVAL '1 days'
                     FROM carbontwin.{tablename}
                     WHERE time_point IS NOT null
                 )
             ORDER BY {dateColumn} ASC
             """
         else:
+            # start/end가 지정된 경우 조건 생성
             where_conditions = [f"{dateColumn} IS NOT NULL"]
             if start_date:
                 where_conditions.append(f"{dateColumn} >= '{start_date}'")
@@ -93,9 +138,11 @@ def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date
             ORDER BY {dateColumn} ASC
             """
         
+        # pandas의 read_sql_query로 결과를 DataFrame으로 반환
         data = pd.read_sql_query(query, engine)
         print(f"✅ 신규 데이터 로드 완료: {len(data)}행")
         
+        # 로드된 데이터의 기간 정보 출력(디버그 목적)
         if len(data) > 0 and dateColumn in data.columns:
             min_date = pd.to_datetime(data[dateColumn]).min()
             max_date = pd.to_datetime(data[dateColumn]).max()
@@ -104,6 +151,7 @@ def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date
         return data
         
     except Exception as e:
+        # DB/쿼리 오류가 발생하면 None을 반환
         print(f"❌ 데이터 로드 오류: {str(e)}")
         return None
 
@@ -111,7 +159,20 @@ def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date
 # 모델 로드
 # -----------------------------------------------------------------------------
 def load_trained_model(model_name):
-    """저장된 LSTM 모델, 스케일러, 설정 파일을 로드"""
+    """저장된 LSTM 모델, 스케일러, 설정 파일을 로드
+
+    파일 구성(관례):
+        - 모델: {model_name}.h5
+        - 스케일러: {model_name}_scaler.pkl (joblib으로 저장된 sklearn 스케일러)
+        - 설정: {model_name}_config.json (json 포맷, 필수 키: studyColumns, targetColumn, dateColumn, r_seqLen 등)
+
+    반환값:
+        (model, scaler, config) 또는 (None, None, None) on error
+
+    주의:
+        - load_model에서 compile=False로 로드한 뒤 compile 호출함(호환성 보장)
+        - 스케일러/설정 파일이 없으면 None 리턴
+    """
     try:
         model_file = os.path.join(model_path, f"{model_name}.h5")
         scaler_file = os.path.join(model_path, f"{model_name}_scaler.pkl")
@@ -123,9 +184,11 @@ def load_trained_model(model_name):
         
         print(f"📂 모델 로드 중: {model_name}")
         
+        # Keras 모델 로드 (컴파일 옵션은 나중에 설정)
         model = load_model(model_file, compile=False)
-        model.compile(optimizer='adam', loss='mse')
+        model.compile(optimizer='adam', loss='mse')  # 예측용으로 기본 컴파일
         
+        # 스케일러와 config 로드
         scaler = joblib.load(scaler_file)
         
         with open(config_file, 'r', encoding='utf-8') as f:
@@ -146,9 +209,36 @@ def load_trained_model(model_name):
 # 🔥 EPS 기반 예측 신뢰도 분석 함수
 # -----------------------------------------------------------------------------
 def analyze_prediction_reliability(predictions, eps_threshold=PREDICTION_EPS_THRESHOLD):
-    """예측값의 신뢰도를 EPS 임계값 기반으로 분석"""
+    """
+    예측값의 신뢰도를 EPS 임계값 기반으로 분석 
+    ※ 현재는 임계값을 0으로 설정 상태
+
+    설명:
+        - predictions 배열을 eps_threshold와 비교하여 신뢰 가능한 예측/신뢰 불가 예측으로 분류
+        - 신뢰 가능한 예측들에 대한 기본 통계(min/max/mean/median/std) 계산
+        - 신뢰 불가 예측들에 대한 기본 통계(min/max/mean/median) 계산
+
+    반환값:
+        dict 형태의 분석 결과:
+            {
+                "eps_threshold": eps_threshold,
+                "total_predictions": total_count,
+                "reliable_predictions": reliable_count,
+                "unreliable_predictions": unreliable_count,
+                "reliability_ratio": ratio,
+                "reliable_indices": [...],
+                "unreliable_indices": [...],
+                "reliable_statistics": {...} or None,
+                "unreliable_statistics": {...} or None
+            }
+
+    주의:
+        - total_count가 0일 경우 ratio는 0으로 처리
+        - 통계값은 float로 변환하여 JSON 시리얼라이즈가 가능하도록 함
+    """
     predictions = np.array(predictions)
     
+    # EPS 임계값 기반 분류 (열 기준)
     reliable_mask = predictions > eps_threshold
     unreliable_mask = ~reliable_mask
     
@@ -166,6 +256,7 @@ def analyze_prediction_reliability(predictions, eps_threshold=PREDICTION_EPS_THR
         "unreliable_indices": np.where(unreliable_mask)[0].tolist()
     }
     
+    # 신뢰 가능한 예측값 통계
     if reliable_count > 0:
         reliable_values = predictions[reliable_mask]
         analysis["reliable_statistics"] = {
@@ -178,6 +269,7 @@ def analyze_prediction_reliability(predictions, eps_threshold=PREDICTION_EPS_THR
     else:
         analysis["reliable_statistics"] = None
     
+    # 신뢰할 수 없는 예측값 통계
     if unreliable_count > 0:
         unreliable_values = predictions[unreliable_mask]
         analysis["unreliable_statistics"] = {
@@ -195,9 +287,19 @@ def analyze_prediction_reliability(predictions, eps_threshold=PREDICTION_EPS_THR
 # 🔥 EPS 필터링을 적용한 예측값 출력 함수
 # -----------------------------------------------------------------------------
 def print_predictions_with_eps_filter(predictions, dates, eps_threshold=PREDICTION_EPS_THRESHOLD):
-    """EPS 임계값 기반으로 필터링된 예측값을 테이블 형식으로 출력"""
+    """
+    EPS 임계값 기반으로 필터링된 예측값을 테이블 형식으로 출력
+
+    동작:
+        - analyze_prediction_reliability를 호출해 통계 및 인덱스를 얻음
+        - 신뢰 가능한 예측값(최대 20개)과 신뢰 불가 예측값(최대 10개)을 표 형태로 출력
+        - 각 예측값에 대해 간단한 '신뢰도' 텍스트(높음/보통/낮음)를 표시
+
+    출력은 디버그/모니터링 용도로 사용되며, 실제 저장/응답은 별도 로직에서 처리
+    """
     predictions = np.array(predictions)
     
+    # 신뢰도 분석
     reliability = analyze_prediction_reliability(predictions, eps_threshold)
     
     print(f"\n📊 EPS 임계값 기반 예측 신뢰도 분석")
@@ -225,6 +327,7 @@ def print_predictions_with_eps_filter(predictions, dates, eps_threshold=PREDICTI
     
     print(f"{'='*90}")
     
+    # 신뢰 가능한 예측값만 출력 (최대 20개)
     reliable_indices = reliability['reliable_indices']
     
     if len(reliable_indices) > 0:
@@ -238,6 +341,7 @@ def print_predictions_with_eps_filter(predictions, dates, eps_threshold=PREDICTI
             idx = reliable_indices[i]
             date_str = dates[idx].strftime('%Y-%m-%d %H:%M:%S') if hasattr(dates[idx], 'strftime') else str(dates[idx])
             pred_val = predictions[idx]
+            # 간단한 등급화: EPS * 10을 초과하면 '높음', 아니면 '보통'
             confidence = "높음" if pred_val > eps_threshold * 10 else "보통"
             
             print(f"{idx:>6} {date_str:<25} {pred_val:>12.4f} {confidence:>10}")
@@ -247,9 +351,11 @@ def print_predictions_with_eps_filter(predictions, dates, eps_threshold=PREDICTI
         
         print(f"{'='*90}")
     else:
+        # 신뢰 가능한 예측값이 아예 없을 때의 안내문
         print(f"\n⚠️  신뢰 가능한 예측값이 없습니다!")
         print(f"   💡 모델 재학습을 권장합니다.")
     
+    # 신뢰 불가 예측값도 일부 출력 (처음 10개만)
     unreliable_indices = reliability['unreliable_indices']
     
     if len(unreliable_indices) > 0:
@@ -277,7 +383,31 @@ def print_predictions_with_eps_filter(predictions, dates, eps_threshold=PREDICTI
 def predict_future_with_eps(model, scaler, config, new_data, future_steps=None, 
                             eps_threshold=PREDICTION_EPS_THRESHOLD, 
                             apply_filter=True):
-    """EPS 임계값 필터링이 적용된 미래값 예측 (1일 데이터로 7일 예측)"""
+    """
+    EPS 임계값 필터링이 적용된 미래값 예측
+
+    주요 로직 요약:
+        1) 입력 데이터의 마지막 seq_len 구간을 가져와 시퀀스를 구성
+        2) 루프를 돌며 한 스텝씩 예측 (auto-regressive 방식)
+        3) 예측 스텝마다 스케일링 역변환을 통해 원단위 예측값을 얻음
+        4) EPS 임계값과 시간대(주간/야간)에 따라 필터링 적용
+           - pred_original <= eps_threshold -> 0으로 설정 (노이즈 제거)
+           - 야간(6시 미만 또는 18시 이후)에는 원본의 10%만 적용 (야간 보수적 적용)
+        5) 필터링된 값을 시퀀스에 반영하여 다음 스텝 예측에 사용
+        6) 예측 결과와 신뢰도(0~1)를 구성하여 반환
+
+    파라미터:
+        model: Keras 학습된 모델
+        scaler: 학습 때 사용한 스케일러 (mean_, scale_ 속성 필요)
+        config: 모델 설정(dict) - 반드시 'dateColumn','studyColumns','targetColumn','r_seqLen' 포함
+        new_data: 예측에 사용할 최신 데이터(DataFrame)
+        future_steps: 예측할 스텝 수 (기본 값이 None이면 672로 설정)
+        eps_threshold: EPS 임계값 (float)
+        apply_filter: True이면 필터링 적용(작업 기본값)
+
+    반환값:
+        dict 형태의 예측 결과 (예: predictions 리스트, 통계, 신뢰도 분석 등)
+    """
     try:
         dateColumn = config['dateColumn']
         studyColumns = config['studyColumns']
@@ -285,66 +415,45 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
         seq_len = int(config['r_seqLen'])
         pred_days = int(config['r_predDays'])
         
+        # 기본값: 7일치 (15분 간격 가정 시 7*96 = 672)
         if future_steps is None:
             future_steps = 672  # 7일 = 7 * 96 (15분 간격)
         
         study_columns_list = [col.strip() for col in studyColumns.split(',')]
         target_idx = study_columns_list.index(targetColumn)
         
+        # 마지막 시간 정보 추출: new_data의 마지막 행의 dateColumn 사용
         if dateColumn in new_data.columns:
             last_date = pd.to_datetime(new_data[dateColumn].iloc[-1])
         else:
             last_date = datetime.now()
         
         print(f"\n🔮 EPS 필터링 미래값 예측 시작...")
-        print(f"   - 입력 데이터: {len(new_data)}개 (최근 1일치)")
         print(f"   - 시퀀스 길이: {seq_len}개")
-        print(f"   - 예측 스텝: {future_steps}개 (7일치)")
+        print(f"   - 예측 스텝: {future_steps}개")
         print(f"   - EPS 임계값: {eps_threshold}")
         print(f"   - 필터링 적용: {'예' if apply_filter else '아니오'}")
-        print(f"   - 마지막 데이터 시간: {last_date}")
         
+        # 예측에 사용할 입력 부분만 float 타입으로 변환
         data_for_prediction = new_data[study_columns_list].astype(float)
         
-        # 🔥 NULL 체크 및 처리
         # 🔥 NULL 체크 및 처리
         null_count = data_for_prediction.isnull().sum().sum()
         if null_count > 0:
             print(f"⚠️  경고: {null_count}개의 NULL 값 발견!")
             print(f"   NULL 값 분포:\n{data_for_prediction.isnull().sum()}")
             
+            # 1단계: Forward fill, Backward fill 시도
             print(f"\n   📝 1단계: ffill/bfill 적용...")
             data_for_prediction = data_for_prediction.ffill().bfill()
             
             remaining_nulls = data_for_prediction.isnull().sum().sum()
             
+            # 2단계: 여전히 NULL이 남아있으면 처리
             if remaining_nulls > 0:
                 print(f"   📝 2단계: 남은 {remaining_nulls}개 NULL 처리 중...")
                 
-                # 🔥 현재 월 확인
-                current_month = datetime.now().month
-                
-                # 🔥 월별 기본값 (한국 평균 기온/습도)
-                MONTHLY_DEFAULTS = {
-                    1: {'temp': 0, 'humi': 55},    # 1월
-                    2: {'temp': 3, 'humi': 55},    # 2월
-                    3: {'temp': 8, 'humi': 60},    # 3월
-                    4: {'temp': 14, 'humi': 60},   # 4월
-                    5: {'temp': 19, 'humi': 65},   # 5월
-                    6: {'temp': 23, 'humi': 70},   # 6월
-                    7: {'temp': 26, 'humi': 80},   # 7월
-                    8: {'temp': 27, 'humi': 80},   # 8월
-                    9: {'temp': 22, 'humi': 75},   # 9월
-                    10: {'temp': 16, 'humi': 70},  # 10월
-                    11: {'temp': 9, 'humi': 65},   # 11월
-                    12: {'temp': 2, 'humi': 60},   # 12월
-                }
-                
-                print(f"      - 현재 월: {current_month}월")
-                print(f"      - 기본 온도: {MONTHLY_DEFAULTS[current_month]['temp']}°C")
-                print(f"      - 기본 습도: {MONTHLY_DEFAULTS[current_month]['humi']}%")
-                
-                # 모든 컬럼에 대해 처리
+                # 모든 컬럼에 대해 자동 처리
                 for col in data_for_prediction.columns:
                     null_count_col = data_for_prediction[col].isnull().sum()
                     
@@ -352,22 +461,13 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
                         # 평균값 계산
                         mean_val = data_for_prediction[col].mean()
                         
-                        # 평균값도 NaN이면 (모든 값이 NULL) 컬럼별 기본값 사용
+                        # 평균값도 NaN이면 (모든 값이 NULL) 0 사용
                         if pd.isna(mean_val):
-                            # 온도/습도 컬럼은 월별 기본값 사용
-                            if 'temp' in col.lower():
-                                fill_value = MONTHLY_DEFAULTS[current_month]['temp']
-                                print(f"      - {col}: {fill_value}°C로 채움 (월별 평균 온도)")
-                            elif 'humi' in col.lower():
-                                fill_value = MONTHLY_DEFAULTS[current_month]['humi']
-                                print(f"      - {col}: {fill_value}%로 채움 (월별 평균 습도)")
-                            else:
-                                # 다른 컬럼은 0
-                                fill_value = 0
-                                print(f"      - {col}: 0으로 채움 (기본값)")
+                            fill_value = 0
+                            print(f"      - {col}: 0으로 채움 (모든 값이 NULL)")
                         else:
                             fill_value = mean_val
-                            print(f"      - {col}: {fill_value:.2f}로 채움 (데이터 평균값)")
+                            print(f"      - {col}: {fill_value:.2f}로 채움 (평균값)")
                         
                         data_for_prediction[col] = data_for_prediction[col].fillna(fill_value)
             
@@ -375,89 +475,59 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
             final_nulls = data_for_prediction.isnull().sum().sum()
             if final_nulls > 0:
                 print(f"\n❌ 오류: {final_nulls}개의 NULL을 처리할 수 없습니다!")
+                print(f"   남은 NULL 분포:\n{data_for_prediction.isnull().sum()}")
                 return None
             else:
                 print(f"\n   ✅ 모든 NULL 값 처리 완료")
         
+        # 입력 데이터가 시퀀스 길이보다 작으면 에러
         if len(data_for_prediction) < seq_len:
             raise ValueError(f"데이터 부족: {len(data_for_prediction)}개 (최소 {seq_len}개 필요)")
         
+        # 정규화 (scaler를 사용하여 학습 시와 동일한 변환 적용)
         data_scaled = scaler.transform(data_for_prediction)
         
-        # 🔥 시간 간격 계산 개선 (가장 중요!)
-        time_delta = pd.Timedelta(minutes=15)  # 기본값 먼저 설정
-        
+        # 시간 간격 계산: 마지막 두 행의 차이로 시간 간격을 추정 (없으면 15분 가정)
         if dateColumn in new_data.columns and len(new_data) > 1:
             dates = pd.to_datetime(new_data[dateColumn])
-            
-            # 여러 구간의 시간 간격 계산
-            time_diffs = dates.diff().dropna()
-            
-            if len(time_diffs) > 0:
-                # 가장 빈번한 간격 (mode)
-                mode_diff = time_diffs.mode()
-                if not mode_diff.empty and mode_diff[0] > pd.Timedelta(0):
-                    time_delta = mode_diff[0]
-                    print(f"   ⏰ 계산된 시간 간격: {time_delta} ({time_delta.total_seconds()/60:.0f}분)")
-                else:
-                    # mode가 없으면 median
-                    median_diff = time_diffs.median()
-                    if median_diff > pd.Timedelta(0) and median_diff <= pd.Timedelta(hours=1):
-                        time_delta = median_diff
-                        print(f"   ⏰ 계산된 시간 간격(중앙값): {time_delta} ({time_delta.total_seconds()/60:.0f}분)")
-                    else:
-                        print(f"   ⚠️ 비정상적인 간격 감지, 기본값 15분 사용")
-            else:
-                print(f"   ⏰ 기본 시간 간격 사용: 15분")
+            time_delta = (dates.iloc[-1] - dates.iloc[-2])
         else:
-            print(f"   ⏰ 기본 시간 간격 사용: 15분")
-        
-        # 🔥 디버그 출력
-        print(f"\n   🔍 시간 설정 확인:")
-        print(f"      - last_date = {last_date}")
-        print(f"      - time_delta = {time_delta}")
-        print(f"      - 테스트: 다음 시간 = {last_date + time_delta}")
-        
-        # 🔥 안전장치: time_delta가 0 이하면 강제로 15분 설정
-        if time_delta <= pd.Timedelta(0):
-            print(f"   ⚠️ 경고: time_delta가 0 또는 음수! 강제로 15분 설정")
             time_delta = pd.Timedelta(minutes=15)
         
+        # 현재 시퀀스를 마지막 seq_len 데이터로 초기화
         current_sequence = data_scaled[-seq_len:].copy()
         
+        # 결과 저장용 리스트들
         future_predictions = []
-        future_predictions_raw = []
+        future_predictions_raw = []  # 필터링 전 원본값
         future_dates = []
         prediction_confidence = []
         
+        # 기준값(baseline) 계산: 최근 100개 중 양수값의 중앙값 사용(없으면 eps 사용)
         recent_data = data_for_prediction[targetColumn].tail(100)
         recent_positive = recent_data[recent_data > eps_threshold]
         baseline = recent_positive.median() if len(recent_positive) > 0 else eps_threshold
         
         print(f"   📊 예측 기준값: {baseline:.4f}")
-        print(f"\n   🚀 예측 시작...\n")
         
-        # 🔥 예측 루프
+        # 예측 루프: 각 스텝마다 예측하고 시퀀스를 업데이트
         for step in range(future_steps):
-            # 명확한 날짜 계산
-            next_date = last_date + (time_delta * (step + 1))
+            next_date = last_date + time_delta * (step + 1)
             hour = next_date.hour
             
-            # 처음 10개와 마지막 5개만 출력
-            if step < 10:
-                print(f"   Step {step:3d}: {next_date.strftime('%Y-%m-%d %H:%M:%S')}")
-            elif step == 10:
-                print(f"   ... ({future_steps - 15}개 생략)")
-            elif step >= future_steps - 5:
-                print(f"   Step {step:3d}: {next_date.strftime('%Y-%m-%d %H:%M:%S')}")
-            
+            # 모델 입력 형태 맞춤: (1, seq_len, feature_count)
             input_data = current_sequence.reshape(1, seq_len, len(study_columns_list))
             pred_scaled = model.predict(input_data, verbose=0)[0, 0]
             
+            # 역정규화: scaler.scale_[target_idx]와 mean_[target_idx] 이용
             pred_original = pred_scaled * scaler.scale_[target_idx] + scaler.mean_[target_idx]
             
+            # 원본 예측값 저장 (필터 적용 전)
             future_predictions_raw.append(pred_original)
             
+            # 🔥 EPS 필터링 적용 로직:
+            # - eps 이하이면 0으로 강제
+            # - 낮에는 그대로, 밤에는 10%만 적용 (노이즈 억제)
             if apply_filter:
                 if pred_original <= eps_threshold:
                     pred_filtered = 0.0
@@ -465,36 +535,43 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
                     if 6 <= hour < 18:
                         pred_filtered = pred_original
                     else:
+                        # 야간 보수적 적용: 원본의 10%만 사용
                         pred_filtered = max(0, pred_original * 0.1)
             else:
+                # 필터링을 사용하지 않을 경우 음수는 0으로 보정
                 pred_filtered = max(0, pred_original)
             
+            # 신뢰도 계산: baseline과 비교하여 0~1 범위로 스케일링 (단순화된 방식)
             if pred_filtered > eps_threshold:
                 confidence = min(1.0, pred_filtered / (baseline * 2))
             else:
                 confidence = 0.0
             
+            # 결과들에 추가
             future_predictions.append(pred_filtered)
             future_dates.append(next_date)
             prediction_confidence.append(confidence)
             
+            # 다음 스텝을 위해 시퀀스에 새 샘플을 추가
+            # - new_point는 마지막 row의 복사본을 사용해 다른 feature는 유지
+            # - target 컬럼만 새 예측값으로 대체 (스케일링 후 반영)
             new_point = current_sequence[-1].copy()
             new_point_scaled = (pred_filtered - scaler.mean_[target_idx]) / scaler.scale_[target_idx]
             new_point[target_idx] = new_point_scaled
             
+            # 슬라이딩 윈도우: 첫 행 제거하고 새 행 추가
             current_sequence = np.vstack([current_sequence[1:], new_point])
             
+            # 진행 로그 (디버그 목적)
             if (step + 1) % 100 == 0:
                 print(f"   ⏳ 진행: {step + 1}/{future_steps} 스텝 완료")
         
-        print(f"\n✅ 예측 완료!")
+        print(f"✅ 예측 완료!")
         
-        # 날짜 범위 확인
-        if len(future_dates) > 0:
-            print(f"   📅 예측 기간: {future_dates[0].strftime('%Y-%m-%d %H:%M:%S')} ~ {future_dates[-1].strftime('%Y-%m-%d %H:%M:%S')}")
-        
+        # 신뢰도 분석 (EPS 기준)
         reliability = analyze_prediction_reliability(future_predictions, eps_threshold)
         
+        # 요약 출력
         print(f"\n📊 예측 결과 요약:")
         print(f"   - 전체 예측: {len(future_predictions)}개")
         print(f"   - 신뢰 가능: {reliability['reliable_predictions']}개 "
@@ -502,8 +579,10 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
         print(f"   - 신뢰 불가: {reliability['unreliable_predictions']}개")
         print(f"   - 예측값 범위: {min(future_predictions):.4f} ~ {max(future_predictions):.4f}")
         
+        # 테이블 형태로 주요 결과 출력 (콘솔)
         print_predictions_with_eps_filter(future_predictions, future_dates, eps_threshold)
         
+        # 반환용 결과 딕셔너리 구성
         future_result = {
             "model_name": config['modelName'],
             "target_column": targetColumn,
@@ -518,6 +597,7 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
             "predictions": []
         }
         
+        # 각 스텝 결과를 리스트에 순차적으로 추가
         for i, (date, pred, pred_raw, conf) in enumerate(
             zip(future_dates, future_predictions, future_predictions_raw, prediction_confidence)):
             future_result["predictions"].append({
@@ -530,6 +610,7 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
                 "is_reliable": pred > eps_threshold,
             })
         
+        # 전체 통계: numpy를 사용해 간단히 계산하고 직렬화 준비
         future_result["statistics"] = {
             "min_predicted": convert_to_serializable(np.min(future_predictions)),
             "max_predicted": convert_to_serializable(np.max(future_predictions)),
@@ -541,6 +622,7 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
         return future_result
         
     except Exception as e:
+        # 예측 중 예외 발생 시 스택 트레이스 출력 후 None 반환
         print(f"❌ 미래값 예측 오류: {str(e)}")
         import traceback
         traceback.print_exc()
@@ -551,7 +633,25 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
 # -----------------------------------------------------------------------------
 def save_predictions_to_db_with_eps(prediction_result, target_table="solar_generation_forecast", 
                                     only_reliable=False):
-    """미래 예측 결과를 PostgreSQL DB에 저장"""
+    """
+    미래 예측 결과를 PostgreSQL DB에 저장 (EPS 필터링 옵션)
+
+    파라미터:
+        prediction_result: predict_future_with_eps의 반환 dict
+        target_table: 저장 대상 테이블명 (carbontwin.<target_table> 사용)
+        only_reliable: True이면 is_reliable == True인 예측만 저장
+
+    동작:
+        - 기존 동일 time_point 레코드는 DELETE로 제거(중복 방지)
+        - INSERT로 새 레코드 추가 (time_point, forecast_solar_kwh, reg_dt)
+        - 트랜잭션으로 묶어 중간 오류 시 롤백
+
+    반환값:
+        (success_count, fail_count)
+    주의:
+        - 실제 테이블 스키마(칼럼명)가 다르면 INSERT문 수정 필요
+        - 시간 포맷은 ISO8601 문자열로 전달되므로 DB의 time_point 칼럼 타입에 맞게 변환될 것
+    """
     if prediction_result is None:
         print("❌ 저장할 예측 결과가 없습니다.")
         return 0, 0
@@ -564,6 +664,7 @@ def save_predictions_to_db_with_eps(prediction_result, target_table="solar_gener
             print("❌ 예측 데이터가 비어있습니다.")
             return 0, 0
         
+        # only_reliable 옵션에 따라 필터링
         if only_reliable:
             predictions = [p for p in predictions if p.get('is_reliable', False)]
             print(f"\n📊 신뢰 가능한 예측만 저장: {len(predictions)}건")
@@ -571,37 +672,40 @@ def save_predictions_to_db_with_eps(prediction_result, target_table="solar_gener
         print(f"\n💾 예측 결과 DB 저장 시작...")
         print(f"   - 대상 테이블: carbontwin.{target_table}")
         print(f"   - 저장할 데이터: {len(predictions)}건")
+        print(f"   - 저장할 데이터: {predictions}건")
         
         success_count = 0
         fail_count = 0
         
-        # 🔥 with문 사용 + 명시적 트랜잭션 관리
-        with engine.begin() as connection:
-            # 🔥 타임존 설정
-            connection.execute(text("SET timezone = 'Asia/Seoul'"))
+        # DB 커넥션과 트랜잭션 처리
+        with engine.connect() as conn:
+            trans = conn.begin()
             
             try:
+
+                conn.execute(text("SET timezone = 'Asia/Seoul'"))
+
                 for pred in predictions:
                     time_point = pred['date']
                     forecast_value = pred['predicted_value']
                     
-                    # 기존 데이터 삭제
+                    # 중복 제거: 동일 time_point인 경우 삭제(정책)
                     delete_query = text(f"""
                     DELETE FROM carbontwin.{target_table}
                     WHERE time_point = :time_point
                     """)
                     
-                    connection.execute(delete_query, {"time_point": time_point})
+                    conn.execute(delete_query, {"time_point": time_point})
                     
-                    # 새 데이터 삽입
+                    # 삽입: 기본 컬럼명 사용 (필요시 수정)
                     insert_query = text(f"""
                     INSERT INTO carbontwin.{target_table} 
                         (time_point, forecast_solar_kwh, reg_dt)
                     VALUES 
-                        (:time_point, :forecast_value, NOW()) 
+                        (:time_point, :forecast_value, now()) 
                     """) 
                     
-                    connection.execute(
+                    conn.execute(
                         insert_query,
                         {
                             "time_point": time_point,
@@ -610,26 +714,24 @@ def save_predictions_to_db_with_eps(prediction_result, target_table="solar_gener
                     )
                     success_count += 1
                     
+                    # 대량 삽입시 진행 로그 출력(디버그/모니터링)
                     if success_count % 100 == 0:
                         print(f"   ⏳ 진행: {success_count}/{len(predictions)} 건")
                 
-                # 🔥 with문이 자동으로 커밋함
+                trans.commit()
+                
                 print(f"✅ DB 저장 완료!")
                 print(f"   - 성공: {success_count}건")
                 
             except Exception as e:
-                # 🔥 with문이 자동으로 롤백함
-                print(f"❌ DB 저장 중 오류 (자동 롤백됨): {str(e)}")
-                import traceback
-                traceback.print_exc()
-                fail_count = len(predictions) - success_count
+                trans.rollback()
+                print(f"❌ DB 저장 중 오류 (롤백됨): {str(e)}")
+                return success_count, len(predictions) - success_count
         
         return success_count, fail_count
         
     except Exception as e:
         print(f"❌ DB 연결 오류: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return 0, len(predictions) if predictions else 0
 
 # -----------------------------------------------------------------------------
@@ -637,36 +739,51 @@ def save_predictions_to_db_with_eps(prediction_result, target_table="solar_gener
 # -----------------------------------------------------------------------------
 def main(model_name=None, tablename=None, save_to_db=True, only_reliable=False, 
          eps_threshold=PREDICTION_EPS_THRESHOLD, apply_filter=True):
-    """메인 실행 함수 - 최근 1일 데이터로 미래 7일 예측"""
+    """메인 실행 함수
+
+    동작 요약:
+        1. 모델/스케일러/설정 로드
+        2. DB에서 신규 데이터 로드
+        3. predict_future_with_eps로 미래 예측 수행
+        4. save_predictions_to_db_with_eps로 DB에 저장 (옵션)
+        5. 예외/오류 발생 시 적절히 메시지 출력
+
+    반환값:
+        predict_future_with_eps가 반환한 결과 dict 또는 None
+    """
     print("=" * 70)
-    print("🔮 LSTM 미래 예측 시스템 (1일 → 7일)")
+    print("🔮 EPS 필터링 적용 LSTM 예측 시스템")
     print("=" * 70)
     
+    # 모델 로드
     model, scaler, config = load_trained_model(model_name)
     
     if model is None:
         return None
     
     print(f"\n📊 데이터베이스에서 데이터 로드 중...")
-    new_data = load_new_data(tablename, config['dateColumn'], config['studyColumns'], days_limit=1)
+    # load_new_data의 days_limit 파라미터는 기본값으로 호출
+    new_data = load_new_data(tablename, config['dateColumn'], config['studyColumns'], days_limit=7)
     
     if new_data is None or new_data.empty:
         print("❌ 예측할 데이터가 없습니다.")
         return None
     
+    # 예측 스텝 기본: 7일
     future_steps = 672  # 7일
     
     print(f"\n🔮 미래값 예측 수행")
-    print(f"   - 입력: 최근 1일 ({len(new_data)}개 데이터)")
-    print(f"   - 출력: 미래 7일 ({future_steps}개 예측)")
+    print(f"   - 예측 스텝: {future_steps}개")
     print(f"   - EPS 임계값: {eps_threshold}")
     print(f"   - 필터링 적용: {'예' if apply_filter else '아니오'}")
     
+    # 실제 예측 호출
     future_result = predict_future_with_eps(
         model, scaler, config, new_data, future_steps,
         eps_threshold, apply_filter
     )
     
+    # 예측 결과가 있고 DB 저장 옵션이 켜져 있으면 저장 수행
     if future_result and save_to_db:
         success, fail = save_predictions_to_db_with_eps(
             future_result, 
@@ -690,30 +807,44 @@ def main(model_name=None, tablename=None, save_to_db=True, only_reliable=False,
 # 프로그램 시작점
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
-    """최근 1일 데이터로 미래 7일 예측"""
+    """
+    EPS 필터링 적용 예측 스크립트 실행
+
+    사용법:
+        python lstm_model_load.py
+
+    실행시 제공되는 옵션:
+        - 사용자가 콘솔에서 모드를 선택하고 EPS 값 입력 가능
+        - 기본적으로 모델명과 테이블명은 스크립트 내부의 기본값을 사용
+    """
     try:
         model_name = "solar-hybrid-seq-2-test-20251017-test-no-add-test"
         tablename = "lstm_input_15m"
         
         print("\n" + "=" * 80)
-        print("🔍 실행 모드: 1일 데이터 → 7일 예측")
+        print("🔍 실행 모드 선택")
         print("=" * 80)
+        print("\n1. EPS 필터링 적용 예측 (권장)")
+        # 사용자가 입력하지 않으면 기본값 "1" 사용
         
-        eps_threshold = PREDICTION_EPS_THRESHOLD
+        # EPS 임계값 설정: 입력이 없으면 전역값 사용
+        eps_threshold = PREDICTION_EPS_THRESHOLD;
         
         print(f"\n⚙️  설정:")
         print(f"   - EPS 임계값: {eps_threshold}")
+        
+        # EPS 필터링 적용, 전체 저장
         print(f"   - 필터링: 적용")
         print(f"   - DB 저장: 전체")
 
         main(
-            model_name=model_name,
-            tablename=tablename,
-            save_to_db=True,
-            only_reliable=False,
-            eps_threshold=eps_threshold,
-            apply_filter=True
-        )
+                model_name=model_name,
+                tablename=tablename,
+                save_to_db=True,
+                only_reliable=False,
+                eps_threshold=eps_threshold,
+                apply_filter=True
+            )
             
     except KeyboardInterrupt:
         print("\n\n⚠️  사용자에 의해 중단되었습니다.")
