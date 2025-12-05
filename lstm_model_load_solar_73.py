@@ -31,6 +31,7 @@ ENV = os.getenv('FLASK_ENV', 'local')
 
 root = "D:/work/lstm"
 model_path = os.path.abspath(root + "/saved_models")
+cust_id = "73";
 
 # -----------------------------------------------------------------------------
 # 🔥 EPS 임계값 설정 (전역 변수)
@@ -42,7 +43,8 @@ PREDICTION_EPS_THRESHOLD = 0
 # -----------------------------------------------------------------------------
 def get_db_engine():
     """PostgreSQL 데이터베이스 연결 엔진 생성"""
-    connection_string = "postgresql://postgres:mapinus%401004@10.10.10.201:5434/postgres"
+    # connection_string = "postgresql://postgres:mapinus%401004@10.10.10.201:5434/postgres"
+    connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
     return create_engine(connection_string)
 
 def convert_to_serializable(obj):
@@ -67,6 +69,7 @@ def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date
     try:
         engine = get_db_engine()
         
+        print("cust_id : ",cust_id);
         if start_date is None and end_date is None:
             query = f"""
             SELECT {studyColumns},{dateColumn}
@@ -77,6 +80,7 @@ def load_new_data(tablename, dateColumn, studyColumns, start_date=None, end_date
                     FROM carbontwin.{tablename}
                     WHERE time_point IS NOT null
                 )
+              AND cust_id = {cust_id}
             ORDER BY {dateColumn} ASC
             """
         else:
@@ -326,15 +330,15 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
                 
                 # 🔥 월별 기본값 (한국 평균 기온/습도)
                 MONTHLY_DEFAULTS = {
-                    1: {'temp': 0, 'humi': 55},    # 1월
-                    2: {'temp': 3, 'humi': 55},    # 2월
-                    3: {'temp': 8, 'humi': 60},    # 3월
-                    4: {'temp': 14, 'humi': 60},   # 4월
-                    5: {'temp': 19, 'humi': 65},   # 5월
-                    6: {'temp': 23, 'humi': 70},   # 6월
-                    7: {'temp': 26, 'humi': 80},   # 7월
-                    8: {'temp': 27, 'humi': 80},   # 8월
-                    9: {'temp': 22, 'humi': 75},   # 9월
+                    1:  {'temp': 0, 'humi': 55},    # 1월
+                    2:  {'temp': 3, 'humi': 55},    # 2월
+                    3:  {'temp': 8, 'humi': 60},    # 3월
+                    4:  {'temp': 14, 'humi': 60},   # 4월
+                    5:  {'temp': 19, 'humi': 65},   # 5월
+                    6:  {'temp': 23, 'humi': 70},   # 6월
+                    7:  {'temp': 26, 'humi': 80},   # 7월
+                    8:  {'temp': 27, 'humi': 80},   # 8월
+                    9:  {'temp': 22, 'humi': 75},   # 9월
                     10: {'temp': 16, 'humi': 70},  # 10월
                     11: {'temp': 9, 'humi': 65},   # 11월
                     12: {'temp': 2, 'humi': 60},   # 12월
@@ -549,7 +553,7 @@ def predict_future_with_eps(model, scaler, config, new_data, future_steps=None,
 # -----------------------------------------------------------------------------
 # 🔥 EPS 필터링 적용한 DB 저장 함수
 # -----------------------------------------------------------------------------
-def save_predictions_to_db_with_eps(prediction_result, target_table="solar_generation_forecast", 
+def save_predictions_to_db_with_eps(prediction_result,target_table="solar_generation_forecast", 
                                     only_reliable=False):
     """미래 예측 결과를 PostgreSQL DB에 저장"""
     if prediction_result is None:
@@ -596,9 +600,9 @@ def save_predictions_to_db_with_eps(prediction_result, target_table="solar_gener
                     # 새 데이터 삽입
                     insert_query = text(f"""
                     INSERT INTO carbontwin.{target_table} 
-                        (time_point, forecast_solar_kwh, reg_dt)
+                        (time_point, forecast_solar_kwh, reg_dt, cust_id)
                     VALUES 
-                        (:time_point, :forecast_value, NOW()) 
+                        (:time_point, :forecast_value, NOW(), {cust_id}) 
                     """) 
                     
                     connection.execute(
@@ -692,7 +696,8 @@ def main(model_name=None, tablename=None, save_to_db=True, only_reliable=False,
 if __name__ == "__main__":
     """최근 1일 데이터로 미래 7일 예측"""
     try:
-        model_name = "solar-hybrid-seq-2-test-20251017-test-no-add-test"
+        #model_name = "solar-hybrid-seq-2-test-20251017-test-no-add-test"
+        model_name = "usage_kwh_model_test_solar"
         tablename = "lstm_input_15m"
         
         print("\n" + "=" * 80)

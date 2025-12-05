@@ -75,6 +75,7 @@ def get_db_engine():
         - 실험 결과 저장 (모델 정보, 성능 지표)
     """
     connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
+    # connection_string = "postgresql://postgres:mapinus%401004@10.10.10.201:5434/postgres"
     # connection_string = "postgresql://postgres:7926@localhost:5432/postgres"
     return create_engine(connection_string)
 
@@ -139,7 +140,7 @@ def load_experiments_config(config_file="experiments.json"):
 # 데이터베이스에서 학습 데이터 로드
 # ============================================================================
 
-def load_data_from_db(tablename, dateColumn, studyColumns):
+def load_data_from_db(tablename, dateColumn, studyColumns, cust_id):
     """
     데이터베이스에서 학습용 시계열 데이터 로드
     
@@ -173,8 +174,10 @@ def load_data_from_db(tablename, dateColumn, studyColumns):
           AND TO_CHAR({dateColumn}, 'MM-DD') NOT IN (
             '06-01', '07-28', '07-29', '07-30', '07-31'
         )
+        AND cust_id = {cust_id}
         ORDER BY {dateColumn} ASC
         """
+        print("cust_id : ",cust_id);
         
         # 데이터 로드
         data = pd.read_sql_query(query, engine)
@@ -465,7 +468,8 @@ def run_single_experiment(experiment_config, experiment_index):
     data = load_data_from_db(
         experiment_config['tablename'],
         experiment_config['dateColumn'], 
-        experiment_config['studyColumns']
+        experiment_config['studyColumns'],
+        experiment_config['cust_id']
     )
     
     if data is None:

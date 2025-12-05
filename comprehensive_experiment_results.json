@@ -3,51 +3,51 @@
     "total_experiments": 1,
     "successful_experiments": 1,
     "failed_experiments": 0,
-    "total_execution_time_seconds": 4.0,
-    "start_timestamp": "2025-11-03T14:43:41.678076",
-    "completion_timestamp": "2025-11-03T14:43:41.678076"
+    "total_execution_time_seconds": 90.78,
+    "start_timestamp": "2025-12-03T10:03:19.998840",
+    "completion_timestamp": "2025-12-03T10:03:19.998840"
   },
   "performance_ranking": [
     {
       "rank": 1,
-      "experiment_name": "usage_kwh_model",
-      "model_name": "usage_kwh_model",
-      "accuracy": 84.99,
-      "mape": 15.01,
-      "mae": 7.8141,
-      "rmse": 12.6194,
-      "r2_score": 0.9524,
-      "direction_accuracy": 47.79,
+      "experiment_name": "usage_kwh_model_test_uwage",
+      "model_name": "usage_kwh_model_test_uwage",
+      "accuracy": 81.69,
+      "mape": 18.31,
+      "mae": 8.535,
+      "rmse": 14.4326,
+      "r2_score": 0.9378,
+      "direction_accuracy": 53.55,
       "total_predictions": 974
     }
   ],
   "detailed_results": [
     {
       "status": "success",
-      "modelName": "usage_kwh_model",
-      "training_loss_img": "graphImage/usage_kwh_model_trainingLoss.png",
-      "total_graph_img": "graphImage/usage_kwh_model_totalgraph.png",
-      "diff_graph_img": "graphImage/usage_kwh_model_diffgraph.png",
-      "weekday_comparison_img": "graphImage/usage_kwh_model_weekday_comparison.png",
-      "mape": 15.01,
-      "accuracy": 84.99,
-      "mae": 7.8141,
-      "rmse": 12.6194,
-      "r2_score": 0.9524,
-      "direction_accuracy": 47.79,
-      "prediction_file": "predictions/usage_kwh_model_predictions.json",
+      "modelName": "usage_kwh_model_test_uwage",
+      "training_loss_img": "graphImage/usage_kwh_model_test_uwage_trainingLoss.png",
+      "total_graph_img": "graphImage/usage_kwh_model_test_uwage_totalgraph.png",
+      "diff_graph_img": "graphImage/usage_kwh_model_test_uwage_diffgraph.png",
+      "weekday_comparison_img": "graphImage/usage_kwh_model_test_uwage_weekday_comparison.png",
+      "mape": 18.31,
+      "accuracy": 81.69,
+      "mae": 8.535,
+      "rmse": 14.4326,
+      "r2_score": 0.9378,
+      "direction_accuracy": 53.55,
+      "prediction_file": "predictions/usage_kwh_model_test_uwage_predictions.json",
       "weekday_performance": {
         "workday": {
           "count": 590,
-          "mae": 9.751,
-          "rmse": 14.5624,
-          "mape": 34.0
+          "mae": 10.4886,
+          "rmse": 15.6843,
+          "mape": 38.88
         },
         "holiday": {
           "count": 384,
-          "mae": 4.8382,
-          "rmse": 8.8375,
-          "mape": 105.75
+          "mae": 5.5332,
+          "rmse": 12.263,
+          "mape": 132.22
         }
       },
       "prediction_summary": {
@@ -60,144 +60,144 @@
           "actual_min": 0.0,
           "actual_max": 154.8,
           "actual_mean": 73.46395071868584,
-          "predicted_min": -1.9847209217994788,
-          "predicted_max": 139.24769905898506,
-          "predicted_mean": 75.42232473901534
+          "predicted_min": -1.1093428711357518,
+          "predicted_max": 142.19729726115372,
+          "predicted_mean": 78.73933677305041
         }
       },
       "recent_predictions": [
         {
           "date": "2025-07-27T20:00:00",
           "actual": 3.5999999999999943,
-          "predicted": 2.048264988302975,
-          "error": 1.5517350116970192
+          "predicted": 2.0037254984620176,
+          "error": 1.5962745015379767
         },
         {
           "date": "2025-07-27T20:15:00",
           "actual": 2.8799999999999955,
-          "predicted": 2.074699100519311,
-          "error": 0.8053008994806845
+          "predicted": 2.025078886914102,
+          "error": 0.8549211130858936
         },
         {
           "date": "2025-07-27T20:30:00",
           "actual": 3.1680000000000064,
-          "predicted": 1.9861418896450402,
-          "error": 1.1818581103549661
+          "predicted": 2.0197894556267926,
+          "error": 1.1482105443732138
         },
         {
           "date": "2025-07-27T20:45:00",
           "actual": 2.5919999999999987,
-          "predicted": 2.05331310151675,
-          "error": 0.5386868984832489
+          "predicted": 2.030733556366741,
+          "error": 0.561266443633258
         },
         {
           "date": "2025-07-27T21:00:00",
           "actual": 2.736000000000004,
-          "predicted": 2.1664978001109603,
-          "error": 0.5695021998890439
+          "predicted": 2.051708662433299,
+          "error": 0.6842913375667052
         },
         {
           "date": "2025-07-27T21:15:00",
           "actual": 2.5919999999999987,
-          "predicted": 2.219105140139817,
-          "error": 0.3728948598601818
+          "predicted": 2.0701205792323947,
+          "error": 0.5218794207676041
         },
         {
           "date": "2025-07-27T21:30:00",
           "actual": 2.8799999999999955,
-          "predicted": 2.28977872513272,
-          "error": 0.5902212748672753
+          "predicted": 2.093645830346219,
+          "error": 0.7863541696537766
         },
         {
           "date": "2025-07-27T21:45:00",
           "actual": 3.024000000000001,
-          "predicted": 2.336177016350831,
-          "error": 0.6878229836491698
+          "predicted": 2.111262049713673,
+          "error": 0.9127379502863278
         },
         {
           "date": "2025-07-27T22:00:00",
           "actual": 3.3119999999999976,
-          "predicted": 2.1839183561755533,
-          "error": 1.1280816438244443
+          "predicted": 2.0938154052086873,
+          "error": 1.2181845947913104
         },
         {
           "date": "2025-07-27T22:15:00",
           "actual": 3.024000000000001,
-          "predicted": 2.208206694170528,
-          "error": 0.8157933058294731
+          "predicted": 2.097578662733696,
+          "error": 0.926421337266305
         }
       ],
-      "is_new_model": false,
-      "execution_time": 3.82,
-      "experiment_name": "usage_kwh_model"
+      "is_new_model": true,
+      "execution_time": 90.57,
+      "experiment_name": "usage_kwh_model_test_uwage"
     }
   ],
   "prediction_files": [
     {
-      "experiment_name": "usage_kwh_model",
-      "model_name": "usage_kwh_model",
-      "prediction_file_path": "predictions/usage_kwh_model_predictions.json",
+      "experiment_name": "usage_kwh_model_test_uwage",
+      "model_name": "usage_kwh_model_test_uwage",
+      "prediction_file_path": "predictions/usage_kwh_model_test_uwage_predictions.json",
       "prediction_count": 974,
       "recent_predictions": [
         {
           "date": "2025-07-27T20:00:00",
           "actual": 3.5999999999999943,
-          "predicted": 2.048264988302975,
-          "error": 1.5517350116970192
+          "predicted": 2.0037254984620176,
+          "error": 1.5962745015379767
         },
         {
           "date": "2025-07-27T20:15:00",
           "actual": 2.8799999999999955,
-          "predicted": 2.074699100519311,
-          "error": 0.8053008994806845
+          "predicted": 2.025078886914102,
+          "error": 0.8549211130858936
         },
         {
           "date": "2025-07-27T20:30:00",
           "actual": 3.1680000000000064,
-          "predicted": 1.9861418896450402,
-          "error": 1.1818581103549661
+          "predicted": 2.0197894556267926,
+          "error": 1.1482105443732138
         },
         {
           "date": "2025-07-27T20:45:00",
           "actual": 2.5919999999999987,
-          "predicted": 2.05331310151675,
-          "error": 0.5386868984832489
+          "predicted": 2.030733556366741,
+          "error": 0.561266443633258
         },
         {
           "date": "2025-07-27T21:00:00",
           "actual": 2.736000000000004,
-          "predicted": 2.1664978001109603,
-          "error": 0.5695021998890439
+          "predicted": 2.051708662433299,
+          "error": 0.6842913375667052
         },
         {
           "date": "2025-07-27T21:15:00",
           "actual": 2.5919999999999987,
-          "predicted": 2.219105140139817,
-          "error": 0.3728948598601818
+          "predicted": 2.0701205792323947,
+          "error": 0.5218794207676041
         },
         {
           "date": "2025-07-27T21:30:00",
           "actual": 2.8799999999999955,
-          "predicted": 2.28977872513272,
-          "error": 0.5902212748672753
+          "predicted": 2.093645830346219,
+          "error": 0.7863541696537766
         },
         {
           "date": "2025-07-27T21:45:00",
           "actual": 3.024000000000001,
-          "predicted": 2.336177016350831,
-          "error": 0.6878229836491698
+          "predicted": 2.111262049713673,
+          "error": 0.9127379502863278
         },
         {
           "date": "2025-07-27T22:00:00",
           "actual": 3.3119999999999976,
-          "predicted": 2.1839183561755533,
-          "error": 1.1280816438244443
+          "predicted": 2.0938154052086873,
+          "error": 1.2181845947913104
         },
         {
           "date": "2025-07-27T22:15:00",
           "actual": 3.024000000000001,
-          "predicted": 2.208206694170528,
-          "error": 0.8157933058294731
+          "predicted": 2.097578662733696,
+          "error": 0.926421337266305
         }
       ]
     }

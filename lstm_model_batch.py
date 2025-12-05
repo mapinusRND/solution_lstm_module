@@ -61,7 +61,7 @@ def load_experiments_config(config_file="experiments.json"):
         return []
 
 # ✅ 데이터 로드 함수 (07:00~16:45 필터링 추가)
-def load_data_from_db(tablename, dateColumn, studyColumns):
+def load_data_from_db(tablename, dateColumn, studyColumns,cust_id):
     """데이터베이스에서 데이터 로드 (07:00~16:45만)"""
     try:
         engine = get_db_engine()
@@ -76,6 +76,7 @@ def load_data_from_db(tablename, dateColumn, studyColumns):
             '07-01', '07-08', '07-13', '07-14', '07-15', '07-16',
             '07-17', '07-18', '07-19', '07-21', '07-22'
         )
+        AND cust_id = {cust_id}
         ORDER BY {dateColumn} ASC
         """
         
@@ -241,7 +242,8 @@ def run_single_experiment(experiment_config, experiment_index):
     data = load_data_from_db(
         experiment_config['tablename'],
         experiment_config['dateColumn'], 
-        experiment_config['studyColumns']
+        experiment_config['studyColumns'],
+        experiment_config['cust_id']
     )
     
     if data is None:

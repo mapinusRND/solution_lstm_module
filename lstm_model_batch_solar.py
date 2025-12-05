@@ -69,6 +69,7 @@ def get_db_engine():
     """
     # 데이터베이스 연결 문자열 (실제 운영시 환경변수로 관리 권장)
     connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
+    # connection_string = "postgresql://postgres:mapinus%401004@10.10.10.201:5434/postgres"
     # connection_string = "postgresql://postgres:7926@localhost:5432/postgres"  # 로컬 테스트용
     return create_engine(connection_string)
 
@@ -120,7 +121,7 @@ def load_experiments_config(config_file="experiments.json"):
 # 데이터 로드 함수
 # ============================================================================
 
-def load_data_from_db(tablename, dateColumn, studyColumns):
+def load_data_from_db(tablename, dateColumn, studyColumns, cust_id):
     """
     PostgreSQL 데이터베이스에서 태양광 발전 데이터를 로드
     
@@ -155,8 +156,10 @@ def load_data_from_db(tablename, dateColumn, studyColumns):
             '07-01', '07-08', '07-13', '07-14', '07-15', '07-16',
             '07-17', '07-18', '07-19', '07-21', '07-22', '11-02'
         )
+        AND cust_id = {cust_id}
         ORDER BY {dateColumn} ASC
         """
+        print("cust_id : ",cust_id);
         
         # SQL 쿼리 실행 및 데이터프레임 생성
         data = pd.read_sql_query(query, engine)
@@ -410,7 +413,8 @@ def run_single_experiment(experiment_config, experiment_index):
     data = load_data_from_db(
         experiment_config['tablename'],
         experiment_config['dateColumn'], 
-        experiment_config['studyColumns']
+        experiment_config['studyColumns'],
+        experiment_config['cust_id']
     )
     
     if data is None:

@@ -39,6 +39,7 @@ from datetime import datetime, timedelta
 
 # Flask 환경 변수를 통해 로컬/서버 환경 구분
 root = "D:/work/lstm"
+cust_id = "73";
 
 # 모델 저장 경로 및 예측 결과 저장 경로 설정
 model_path = os.path.abspath(root + "/saved_models")
@@ -57,7 +58,8 @@ def get_db_engine():
         SQLAlchemy Engine 객체
     """
     # connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
-    connection_string = "postgresql://postgres:mapinus%401004@10.10.10.201:5434/postgres"
+    # connection_string = "postgresql://postgres:mapinus%401004@10.10.10.201:5434/postgres"
+    connection_string = "postgresql://postgres:mapinus@10.10.10.201:5432/postgres"
     # connection_string = "postgresql://postgres:carbontwin@221.150.43.89:15432/postgres"
     return create_engine(connection_string)
 
@@ -117,6 +119,7 @@ def load_new_data(tablename, dateColumn, studyColumns):
                     FROM carbontwin.{tablename}
                     WHERE time_point IS NOT null
                 )
+              AND cust_id = {cust_id}
             ORDER BY {dateColumn} ASC
             """
         
@@ -837,8 +840,8 @@ def save_predictions_to_db(prediction_result, target_table="usage_generation_for
 
                     # 2) 새로운 예측값 삽입
                     insert_query = text(f"""
-                    INSERT INTO carbontwin.{target_table} (time_point, forecast_usage_kwh, reg_dt)
-                    VALUES (:time_point, :forecast_value, now())
+                    INSERT INTO carbontwin.{target_table} (time_point, forecast_usage_kwh, reg_dt,cust_id)
+                    VALUES (:time_point, :forecast_value, now(), {cust_id})
                     """)
                     
                     conn.execute(insert_query, {
@@ -973,7 +976,8 @@ def main(model_name, tablename, future_steps=672, save_to_db_flag=True, validati
 if __name__ == "__main__":
     try:
         # 실행 설정
-        model_name = "usage_kwh_model"  # 사용할 모델명
+        # model_name = "usage_kwh_model"  # 사용할 모델명
+        model_name = "usage_kwh_model_test_uwage"  # 사용할 모델명
         tablename = "lstm_input_15m"   # 데이터 테이블명
         
         print("\n" + "=" * 80)

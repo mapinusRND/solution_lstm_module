@@ -1,12 +1,13 @@
 {
   "experiments": [
     {
-      "name": "usage_kwh_model",
+      "name": "usage_kwh_model_test_uwage",
       "tablename": "lstm_input_15m",
+      "cust_id": "73",
       "dateColumn": "time_point",
       "studyColumns": "usage_kwh,is_workday",
       "targetColumn": "usage_kwh",
-      "modelName": "usage_kwh_model",
+      "modelName": "usage_kwh_model_test_uwage",
       "r_epochs": 20,
       "r_batchSize": 48,
       "r_validationSplit": 0.2,
